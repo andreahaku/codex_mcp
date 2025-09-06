@@ -77,32 +77,33 @@ const ConsultCodexSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.7).describe('Sampling temperature'),
   page: z.number().int().min(1).default(1).describe('Page number for pagination (default: 1)'),
   max_tokens_per_page: z.number().int().min(5000).max(20000).default(18000).describe('Maximum tokens per page (default: 18000)'),
-  session_id: z.string().optional().describe('Session ID for persistent context (auto-generated if not provided)'),
+  session_id: z.string().optional().describe('Session/Conversation ID for persistent context (auto-generated if not provided)'),
   workspace_path: z.string().optional().describe('Workspace path for repository isolation (defaults to current working directory)'),
   streaming: z.boolean().default(false).describe('Enable streaming responses for real-time updates')
 });
 
 const StartConversationSchema = z.object({
   topic: z.string().describe('The topic or purpose of the conversation'),
-  instructions: z.string().optional().describe('System instructions for the conversation')
+  instructions: z.string().optional().describe('System instructions for the conversation'),
+  session_id: z.string().optional().describe('Optional session ID to link with existing Codex session')
 });
 
 const ContinueConversationSchema = z.object({
-  conversation_id: z.string().describe('The ID of the conversation to continue'),
+  session_id: z.string().describe('The session/conversation ID to continue'),
   message: z.string().describe('The message to send in the conversation')
 });
 
 const SetConversationOptionsSchema = z.object({
-  conversation_id: z.string().describe('Conversation ID'),
+  session_id: z.string().describe('Session/Conversation ID'),
   context_limit: z.number().int().min(1).max(1000).optional().describe('Messages to keep in context window')
 });
 
 const GetConversationMetadataSchema = z.object({
-  conversation_id: z.string().describe('Conversation ID')
+  session_id: z.string().describe('Session/Conversation ID')
 });
 
 const SummarizeConversationSchema = z.object({
-  conversation_id: z.string().describe('Conversation ID'),
+  session_id: z.string().describe('Session/Conversation ID'),
   keep_last_n: z.number().int().min(0).max(50).default(5).describe('How many recent messages to keep verbatim')
 });
 
@@ -373,10 +374,25 @@ async function handleStartConversation(args: any): Promise<any> {
   const params = StartConversationSchema.parse(args);
   
   try {
-    const conversationId = conversationManager.startConversation(
+    // Use provided session_id or generate a new one
+    const conversationId = params.session_id || conversationManager.startConversation(
       params.topic,
       params.instructions
     );
+    
+    // If session_id was provided, create or link the conversation
+    if (params.session_id) {
+      // Try to get existing conversation, or create new one with provided ID
+      let conversation = conversationManager.getConversation(params.session_id);
+      if (!conversation) {
+        // Create new conversation with the provided ID
+        conversationManager.startConversationWithId(
+          params.session_id,
+          params.topic,
+          params.instructions
+        );
+      }
+    }
 
     return {
       type: 'text',
@@ -396,18 +412,18 @@ async function handleContinueConversation(args: any): Promise<any> {
   
   try {
     // Get conversation context
-    const conversation = conversationManager.getConversation(params.conversation_id);
+    const conversation = conversationManager.getConversation(params.session_id);
     if (!conversation) {
-      return { type: 'text', text: `❌ Conversation not found: ${params.conversation_id}` };
+      return { type: 'text', text: `❌ Conversation not found: ${params.session_id}` };
     }
 
     // Add user message
-    conversationManager.addMessage(params.conversation_id, 'user', params.message);
+    conversationManager.addMessage(params.session_id, 'user', params.message);
 
     // Get formatted messages for API with context limit
     const contextLimit = parseInt(process.env.MAX_CONVERSATION_CONTEXT || '10');
-    const messages = conversationManager.formatForAPI(params.conversation_id, undefined, contextLimit);
-    const instructions = conversationManager.getInstructions(params.conversation_id);
+    const messages = conversationManager.formatForAPI(params.session_id, undefined, contextLimit);
+    const instructions = conversationManager.getInstructions(params.session_id);
 
     // Create response using Codex CLI
     const response = await codexClient.createResponse({
@@ -423,17 +439,17 @@ async function handleContinueConversation(args: any): Promise<any> {
     }
 
     // Add assistant response to conversation
-    conversationManager.addMessage(params.conversation_id, 'assistant', response.text);
+    conversationManager.addMessage(params.session_id, 'assistant', response.text);
 
     return { 
       type: 'text', 
-      text: `${response.text}\n\n---\n💬 Conversation: ${params.conversation_id}` 
+      text: `${response.text}\n\n---\n💬 Conversation: ${params.session_id}` 
     };
   } catch (error: any) {
     logger.error('Error continuing conversation:', error);
     return { 
       type: 'text', 
-      text: `❌ Error continuing conversation ${params.conversation_id}: ${error.message || 'Unknown error'}` 
+      text: `❌ Error continuing conversation ${params.session_id}: ${error.message || 'Unknown error'}` 
     };
   }
 }
@@ -441,12 +457,12 @@ async function handleContinueConversation(args: any): Promise<any> {
 async function handleSetConversationOptions(args: any): Promise<any> {
   const params = SetConversationOptionsSchema.parse(args);
   try {
-    conversationManager.setOptions(params.conversation_id, {
+    conversationManager.setOptions(params.session_id, {
       contextLimit: params.context_limit
     });
     return { 
       type: 'text', 
-      text: `✅ Updated conversation ${params.conversation_id}${params.context_limit ? `\nContext limit: ${params.context_limit}` : ''}` 
+      text: `✅ Updated conversation ${params.session_id}${params.context_limit ? `\nContext limit: ${params.context_limit}` : ''}` 
     };
   } catch (error: any) {
     return { type: 'text', text: `❌ Failed to set options: ${error.message || 'Unknown error'}` };
@@ -455,15 +471,15 @@ async function handleSetConversationOptions(args: any): Promise<any> {
 
 async function handleGetConversationMetadata(args: any): Promise<any> {
   const params = GetConversationMetadataSchema.parse(args);
-  const meta = conversationManager.getMetadata(params.conversation_id);
-  if (!meta) return { type: 'text', text: `❌ Conversation not found: ${params.conversation_id}` };
+  const meta = conversationManager.getMetadata(params.session_id);
+  if (!meta) return { type: 'text', text: `❌ Conversation not found: ${params.session_id}` };
   return { type: 'text', text: JSON.stringify(meta, null, 2) };
 }
 
 async function handleSummarizeConversation(args: any): Promise<any> {
   const params = SummarizeConversationSchema.parse(args);
-  const conversation = conversationManager.getConversation(params.conversation_id);
-  if (!conversation) return { type: 'text', text: `❌ Conversation not found: ${params.conversation_id}` };
+  const conversation = conversationManager.getConversation(params.session_id);
+  if (!conversation) return { type: 'text', text: `❌ Conversation not found: ${params.session_id}` };
 
   // Build summary prompt
   const keep = Math.max(0, params.keep_last_n);
@@ -795,68 +811,68 @@ ${response.text}
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: 'consult_codex',
-      description: 'Consult Codex for planning or coding assistance. Supports pagination for large responses to stay within MCP token limits. Use page parameter for subsequent chunks.',
+      name: 'codex_ask',
+      description: '🌟 Ask Codex for help with coding, planning, or analysis. Supports persistent sessions, streaming, and pagination for large responses.',
       inputSchema: zodToJsonSchema(ConsultCodexSchema) as any
     },
     {
-      name: 'start_conversation',
-      description: 'Start a new conversation with Codex',
+      name: 'codex_chat_start',
+      description: '💬 Start new conversation with Codex (links to session)',
       inputSchema: zodToJsonSchema(StartConversationSchema) as any
     },
     {
-      name: 'continue_conversation',
-      description: 'Continue an existing conversation with Codex',
+      name: 'codex_chat_continue',
+      description: 'Continue existing conversation with Codex',
       inputSchema: zodToJsonSchema(ContinueConversationSchema) as any
     },
     {
-      name: 'set_conversation_options',
-      description: 'Adjust conversation context options',
+      name: 'codex_chat_config',
+      description: 'Configure conversation context and options',
       inputSchema: zodToJsonSchema(SetConversationOptionsSchema) as any
     },
     {
-      name: 'get_conversation_metadata',
-      description: 'Return conversation metadata and messages',
+      name: 'codex_chat_info',
+      description: 'Get conversation metadata and message history',
       inputSchema: zodToJsonSchema(GetConversationMetadataSchema) as any
     },
     {
-      name: 'summarize_conversation',
-      description: 'Summarize a conversation to reduce context size',
+      name: 'codex_chat_summarize',
+      description: 'Summarize conversation to reduce context size',
       inputSchema: zodToJsonSchema(SummarizeConversationSchema) as any
     },
     {
-      name: 'cancel_request',
-      description: 'Cancel ongoing operations in a session or force terminate it',
+      name: 'codex_cancel',
+      description: 'Cancel running Codex operations or force terminate sessions',
       inputSchema: zodToJsonSchema(CancelRequestSchema) as any
     },
     {
-      name: 'get_session_health',
-      description: 'Check health status of sessions and get diagnostics',
+      name: 'codex_status',
+      description: '💻 Check status and health of Codex sessions with diagnostics',
       inputSchema: zodToJsonSchema(GetSessionHealthSchema) as any
     },
     {
-      name: 'restart_session',
-      description: 'Restart a specific session to recover from errors',
+      name: 'codex_restart',
+      description: 'Restart Codex sessions to recover from errors',
       inputSchema: zodToJsonSchema(RestartSessionSchema) as any
     },
     {
-      name: 'get_plan',
-      description: 'Get the current plan from a Codex session',
+      name: 'codex_plan_get',
+      description: '📋 Get current implementation plan from Codex session',
       inputSchema: zodToJsonSchema(GetPlanSchema) as any
     },
     {
-      name: 'update_plan',
-      description: 'Update or modify the plan for a Codex session',
+      name: 'codex_plan_update',
+      description: 'Update or modify implementation plan with Codex',
       inputSchema: zodToJsonSchema(UpdatePlanSchema) as any
     },
     {
-      name: 'preview_patch',
-      description: 'Preview changes that would be made without applying them',
+      name: 'codex_patch_preview',
+      description: 'Preview code changes that Codex plans to make',
       inputSchema: zodToJsonSchema(PreviewPatchSchema) as any
     },
     {
-      name: 'apply_patch',
-      description: 'Apply planned changes to files (requires confirmation)',
+      name: 'codex_patch_apply',
+      description: 'Apply Codex-planned changes to files (requires confirmation)',
       inputSchema: zodToJsonSchema(ApplyPatchSchema) as any
     }
   ]
@@ -879,43 +895,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
 
     switch (name) {
-      case 'consult_codex':
+      case 'codex_ask':
         return { content: [toContent(await handleConsultCodex(args, request.params._meta))] };
       
-      case 'start_conversation':
+      case 'codex_chat_start':
         return { content: [toContent(await handleStartConversation(args))] };
       
-      case 'continue_conversation':
+      case 'codex_chat_continue':
         return { content: [toContent(await handleContinueConversation(args))] };
       
-      case 'set_conversation_options':
+      case 'codex_chat_config':
         return { content: [toContent(await handleSetConversationOptions(args))] };
       
-      case 'get_conversation_metadata':
+      case 'codex_chat_info':
         return { content: [toContent(await handleGetConversationMetadata(args))] };
       
-      case 'summarize_conversation':
+      case 'codex_chat_summarize':
         return { content: [toContent(await handleSummarizeConversation(args))] };
       
-      case 'cancel_request':
+      case 'codex_cancel':
         return { content: [toContent(await handleCancelRequest(args))] };
       
-      case 'get_session_health':
+      case 'codex_status':
         return { content: [toContent(await handleGetSessionHealth(args))] };
       
-      case 'restart_session':
+      case 'codex_restart':
         return { content: [toContent(await handleRestartSession(args))] };
       
-      case 'get_plan':
+      case 'codex_plan_get':
         return { content: [toContent(await handleGetPlan(args))] };
       
-      case 'update_plan':
+      case 'codex_plan_update':
         return { content: [toContent(await handleUpdatePlan(args))] };
       
-      case 'preview_patch':
+      case 'codex_patch_preview':
         return { content: [toContent(await handlePreviewPatch(args))] };
       
-      case 'apply_patch':
+      case 'codex_patch_apply':
         return { content: [toContent(await handleApplyPatch(args))] };
       
       default:

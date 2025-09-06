@@ -90,8 +90,11 @@ export class CodexProcess extends EventEmitter {
       const prompt = command.args[command.args.length - 1];
       const flags = command.args.slice(0, -1);
       
-      // Build full command
-      const cmdArgs = ['codex', ...flags, `"${prompt.replace(/"/g, '\\"')}"`];
+      // Properly escape the prompt for shell execution
+      const escapedPrompt = this.escapeShellArgument(prompt);
+      
+      // Build full command array for execAsync (safer than string)
+      const cmdArgs = ['codex', ...flags, escapedPrompt];
       const fullCommand = cmdArgs.join(' ');
 
       this.logger.debug('Executing command', {
@@ -186,6 +189,18 @@ export class CodexProcess extends EventEmitter {
 
   isHealthy(): boolean {
     return this.isReady;
+  }
+
+  private escapeShellArgument(arg: string): string {
+    // Handle complex arguments by using single quotes and escaping single quotes within
+    if (arg.includes("'")) {
+      // If the argument contains single quotes, we need to handle them specially
+      // Replace each single quote with '\'' (end quote, escaped quote, start quote)
+      return `'${arg.replace(/'/g, "'\\''")}'`;
+    }
+    
+    // For arguments without single quotes, just wrap in single quotes
+    return `'${arg}'`;
   }
 
   private async detectCapabilities(): Promise<void> {

@@ -48,6 +48,37 @@ export class ConversationManager {
     return id;
   }
 
+  startConversationWithId(id: string, topic: string, instructions?: string): string {
+    // Clean up if we're at max capacity
+    if (this.conversations.size >= this.maxConversations) {
+      this.cleanupOldestConversation();
+    }
+
+    const messages: ConversationMessage[] = [];
+
+    // Add initial developer instructions if provided
+    if (instructions) {
+      messages.push({
+        role: 'developer',
+        content: instructions,
+        timestamp: new Date()
+      });
+    }
+
+    const conversation: Conversation = {
+      id,
+      messages,
+      metadata: {
+        created: new Date(),
+        lastActive: new Date(),
+        topic
+      }
+    };
+
+    this.conversations.set(id, conversation);
+    return id;
+  }
+
   addMessage(
     conversationId: string, 
     role: 'user' | 'assistant' | 'developer', 
