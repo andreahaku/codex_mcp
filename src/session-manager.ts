@@ -1,8 +1,8 @@
 import { CodexProcess, CodexCommand, CodexResponse, StreamingEvent, CodexCapabilities } from './codex-process-simple.js';
-import winston from 'winston';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
+import { StructuredLogger } from './logger.js';
 
 export interface SessionInfo {
   id: string;
@@ -19,12 +19,12 @@ export interface SessionInfo {
 export class SessionManager {
   private sessions: Map<string, CodexProcess> = new Map();
   private sessionInfo: Map<string, SessionInfo> = new Map();
-  private logger: winston.Logger;
+  private logger: StructuredLogger;
   private maxSessions: number;
   private maxIdleTime: number; // milliseconds
 
   constructor(
-    logger: winston.Logger,
+    logger: StructuredLogger,
     maxSessions = 10,
     maxIdleTime = 30 * 60 * 1000 // 30 minutes
   ) {
@@ -69,10 +69,10 @@ export class SessionManager {
     // Generate workspace-specific identifier
     const workspaceId = this.generateWorkspaceId(workspacePath);
 
-    this.logger.info('Creating new Codex session', { 
-      sessionId,
+    this.logger.logSessionEvent(sessionId, 'created', {
       workspaceId, 
-      workspacePath 
+      workspacePath,
+      sessionsCount: this.sessions.size
     });
 
     const process = new CodexProcess(sessionId, workspacePath, this.logger);

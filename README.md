@@ -12,21 +12,24 @@ This server is converted from the original GPT-5 MCP server, with cost tracking 
 - **Session Management**: Health monitoring, cancellation, and restart capabilities
 - **Lightweight Persistence**: JSON-based storage for session recovery
 - **Resource Processing**: Handle attached files and content in prompts
+- **🆕 Structured Logging**: Context-aware error categorization and tracking
+- **🆕 Enhanced Capability Detection**: Dynamic discovery of Codex CLI features
+- **🆕 Improved Claude Code Integration**: Optimized for collaborative workflows
 
 ## Available Tools
 
 ### Core Tools
-- `consult_codex`: Get assistance from Codex with persistent sessions, workspace isolation, and streaming support
-- `start_conversation`: Begin a new conversation with context
-- `continue_conversation`: Continue an existing conversation
-- `set_conversation_options`: Configure conversation settings
-- `get_conversation_metadata`: View conversation details
-- `summarize_conversation`: Compress conversation history
+- `🌟 codex_ask`: Primary tool for Codex assistance with enhanced integration
+- `💬 codex_conversation_start`: Begin a new conversation with context  
+- `💬 codex_conversation_continue`: Continue an existing conversation
+- `⚙️ codex_conversation_options`: Configure conversation settings
+- `📊 codex_conversation_metadata`: View conversation details
+- `📝 codex_conversation_summarize`: Compress conversation history
 
 ### Session Management
-- `cancel_request`: Cancel ongoing operations or force terminate sessions
-- `get_session_health`: Monitor session status and get diagnostics
-- `restart_session`: Recover from errors with process restart
+- `🔧 codex_cancel`: Cancel ongoing operations or force terminate sessions
+- `🩺 codex_health`: Monitor session status and get diagnostics
+- `🔄 codex_restart`: Recover from errors with process restart
 
 ## Prerequisites
 
@@ -107,6 +110,8 @@ Environment variables (set in `.env` file):
 - `MAX_CONVERSATION_HISTORY`: Maximum messages per conversation (default: 100)
 - `MAX_CONVERSATION_CONTEXT`: Maximum context messages sent to Codex (default: 10)
 - `LOG_LEVEL`: Logging level (default: info)
+- `MAX_SESSIONS`: Maximum concurrent Codex sessions (default: 10)
+- `SESSION_IDLE_TIMEOUT`: Session cleanup timeout in ms (default: 1800000)
 
 ## Testing
 
@@ -184,28 +189,59 @@ Session: `my-session` | Workspace: `/path/to/repo`
 
 ### **Session Management**
 ```
-@get_session_health                           # Monitor all sessions
-@get_session_health {"session_id": "my-task"} # Check specific session
-@cancel_request {"session_id": "stuck-task"}  # Cancel operations  
-@restart_session {"session_id": "failed"}     # Recover from errors
+@codex_health                           # Monitor all sessions
+@codex_health {"session_id": "my-task"} # Check specific session
+@codex_cancel {"session_id": "stuck-task"}  # Cancel operations  
+@codex_restart {"session_id": "failed"}     # Recover from errors
 ```
 
 ### **Multi-Repository Workflows**
 ```
 # Work on frontend
-@codex {"workspace_path": "/projects/frontend", "session_id": "ui", "prompt": "Update React components"}
+@codex_ask {"workspace_path": "/projects/frontend", "session_id": "ui", "prompt": "Update React components"}
 
 # Switch to backend  
-@codex {"workspace_path": "/projects/backend", "session_id": "api", "prompt": "Add new API endpoints"}
+@codex_ask {"workspace_path": "/projects/backend", "session_id": "api", "prompt": "Add new API endpoints"}
 
 # Sessions remain isolated by workspace
-@get_session_health  # Shows both sessions with different workspace IDs
+@codex_health  # Shows both sessions with different workspace IDs
 ```
+
+## 🚀 Enhanced Integration Features (v2.0)
+
+### **Structured Error Handling**
+All errors are automatically categorized and logged with context:
+- **Codex CLI errors**: Command failures, timeouts, authentication issues
+- **Session management**: Creation, timeout, and capacity issues  
+- **MCP protocol**: Request validation and response handling
+- **Resource errors**: File access, permissions, disk space
+
+### **Dynamic Capability Detection**
+The server automatically detects available Codex CLI features:
+- JSON mode support
+- Available models (GPT-5, o3, etc.)
+- Workspace/directory mode
+- File operation capabilities
+- Plan API support
+- Token limits and constraints
+
+### **Enhanced Shell Security**
+Complex prompts with special characters are automatically escaped for secure execution:
+```javascript
+// Handles prompts like: "What's the best way to implement auth?"
+// Safely escapes: 'What'\''s the best way to implement auth?'
+```
+
+### **Claude Code Optimizations**
+- Unified `session_id` system for seamless integration
+- Tool names prefixed with `codex_` for easy discovery
+- Rich error context with recovery suggestions
+- Workspace-aware session isolation
 
 ## API Reference
 
-### `consult_codex`
-Core Codex interaction with advanced features.
+### `codex_ask`
+🌟 Primary Codex interaction tool with enhanced Claude Code integration.
 
 **Parameters:**
 - `prompt` (string, required): The prompt to send to Codex
@@ -220,16 +256,16 @@ Core Codex interaction with advanced features.
 
 **Response:** Rich Codex output with session and workspace metadata
 
-### `get_session_health`
-Monitor session status and diagnostics.
+### `codex_health`
+🩺 Monitor session status and diagnostics with detailed capability reporting.
 
 **Parameters:**
 - `session_id` (string, optional): Specific session to check
 
 **Response:** Session status, workspace info, capabilities, and request counts
 
-### `cancel_request` / `restart_session`
-Session management and recovery.
+### `codex_cancel` / `codex_restart`
+🔧🔄 Enhanced session management and recovery with structured error handling.
 
 **Parameters:**
 - `session_id` (string, required): Target session ID
@@ -271,10 +307,14 @@ Make sure Codex CLI is authenticated. Run `codex` to check status or re-authenti
 ### Project Structure
 ```
 src/
-├── index.ts           # Main MCP server
-├── codex-client.ts    # Codex CLI wrapper
-├── conversation.ts    # Conversation management
-└── types.ts          # TypeScript types
+├── index.ts                   # Main MCP server
+├── codex-process-simple.ts    # Enhanced Codex CLI wrapper with capability detection
+├── session-manager.ts         # Session management with workspace isolation
+├── conversation.ts            # Conversation management  
+├── logger.ts                  # Structured logging system
+├── error-types.ts             # Error categorization and definitions
+├── error-utils.ts             # Error mapping and recovery utilities
+└── types.ts                   # TypeScript types
 ```
 
 ### Building

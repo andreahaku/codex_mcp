@@ -9,32 +9,20 @@ import {
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import dotenv from 'dotenv';
-import winston from 'winston';
 
 import { CodexClient } from './codex-client.js';
 import { ConversationManager } from './conversation.js';
 import { SessionManager } from './session-manager.js';
 import { chunkResponse, formatPaginatedResponse, estimateTokens } from './token-utils.js';
+import { logger as structuredLogger } from './logger.js';
+import { categorizeError, createErrorContext } from './error-utils.js';
+import { ErrorCategory } from './error-types.js';
 
 // Load environment variables
 dotenv.config();
 
-// Configure logging
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.simple()
-      )
-    })
-  ]
-});
+// Use structured logger from logger.js
+const logger = structuredLogger;
 
 // Initialize components
 const codexClient = new CodexClient();
@@ -207,7 +195,7 @@ async function processResources(meta?: any): Promise<string> {
     }
     
   } catch (error) {
-    logger.warn('Error processing resources:', error);
+    logger.warn('Error processing resources:', { error: error instanceof Error ? error.message : String(error) });
   }
   
   return resourceContent;
@@ -881,8 +869,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
+  const startTime = new Date();
 
-  logger.info(`Calling tool: ${name}`, { requestId, args });
+  // Log MCP request start
+  logger.logWithContext('info', `MCP tool called: ${name}`, {
+    requestId,
+    toolName: name,
+    eventType: 'mcp_request_start',
+    parameters: args,
+    timestamp: startTime
+  });
 
   try {
     // Ensure we always return a valid MCP content item
@@ -937,10 +933,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+    
+    // Log successful completion (this line won't be reached due to returns above, but we handle it in each case)
+    
   } catch (error: any) {
-    logger.error(`Tool ${name} failed:`, { requestId, error });
+    const endTime = new Date();
+    const duration = endTime.getTime() - startTime.getTime();
+    
+    // Create error context for structured logging
+    const errorContext = createErrorContext(
+      undefined, // session ID not available at this level
+      undefined,
+      undefined,
+      requestId,
+      name,
+      { parameters: args, duration }
+    );
+
+    // Categorize the error
+    const categorizedError = categorizeError(error, errorContext, ErrorCategory.MCP_PROTOCOL);
+    
+    // Log MCP request failure
+    logger.logMCPRequest({
+      toolName: name,
+      requestId,
+      parameters: args as Record<string, any>,
+      startTime,
+      endTime,
+      duration,
+      success: false,
+      errorCategory: categorizedError.category,
+      errorCode: categorizedError.code
+    });
+
     return {
-      content: [{ type: 'text', text: `❌ Tool ${name} failed: ${error.message || 'Unknown error'}` }]
+      content: [{ type: 'text', text: `❌ Tool ${name} failed: ${categorizedError.message}` }]
     };
   }
 });
@@ -968,7 +995,7 @@ async function main() {
       maxConversationContext: process.env.MAX_CONVERSATION_CONTEXT || '10'
     });
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    logger.error('Failed to start server:', { error: error instanceof Error ? error.message : String(error) });
     process.exit(1);
   }
 }

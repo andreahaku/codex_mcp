@@ -1,7 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { EventEmitter } from 'events';
-import winston from 'winston';
+import { StructuredLogger } from './logger.js';
+import { categorizeError, createErrorContext } from './error-utils.js';
+import { ErrorCategory } from './error-types.js';
 
 const execAsync = promisify(exec);
 
@@ -29,17 +31,23 @@ export interface CodexCapabilities {
   supportsJson: boolean;
   supportsStreaming: boolean;
   supportsPlanApi: boolean;
+  supportsModelSelection: boolean;
+  supportsWorkspaceMode: boolean;
+  supportsFileOperations: boolean;
+  maxTokens?: number;
+  availableModels: string[];
   version: string;
+  features: string[];
 }
 
 export class CodexProcess extends EventEmitter {
   private sessionId: string;
   private workingDirectory: string;
-  private logger: winston.Logger;
+  private logger: StructuredLogger;
   private capabilities: CodexCapabilities | null = null;
   private isReady = false;
 
-  constructor(sessionId: string, workingDirectory = process.cwd(), logger: winston.Logger) {
+  constructor(sessionId: string, workingDirectory = process.cwd(), logger: StructuredLogger) {
     super();
     this.sessionId = sessionId;
     this.workingDirectory = workingDirectory;
@@ -152,29 +160,50 @@ export class CodexProcess extends EventEmitter {
       };
 
     } catch (error: any) {
-      this.logger.error('Codex command failed', {
+      // Create error context for structured logging
+      const errorContext = createErrorContext(
+        this.sessionId,
+        undefined,
+        this.workingDirectory,
+        requestId,
+        'codex_command',
+        { command: command.args, timeout: command.timeout }
+      );
+
+      // Categorize the error for better handling
+      const categorizedError = categorizeError(error, errorContext, ErrorCategory.CODEX_CLI);
+      
+      // Log with structured context
+      this.logger.logError(categorizedError, {
         sessionId: this.sessionId,
         requestId,
-        error: error.message
+        workspacePath: this.workingDirectory,
+        duration: Date.now() - parseInt(requestId.split('_')[1], 36)
       });
 
       return {
         text: '',
         success: false,
-        error: error.message,
+        error: categorizedError.message,
         exitCode: error.code || 1
       };
     }
   }
 
   async restart(): Promise<void> {
-    this.logger.info('Restarting Codex session', { sessionId: this.sessionId });
+    this.logger.logSessionEvent(this.sessionId, 'restart', {
+      workspacePath: this.workingDirectory,
+      previousCapabilities: this.capabilities
+    });
     
     // Simple restart - just reset ready state and re-detect capabilities
     this.isReady = false;
     await this.start();
     
-    this.logger.info('Codex session restarted successfully', { sessionId: this.sessionId });
+    this.logger.info('Codex session restarted successfully', { 
+      sessionId: this.sessionId,
+      newCapabilities: this.capabilities
+    });
   }
 
   async kill(): Promise<void> {
@@ -207,36 +236,155 @@ export class CodexProcess extends EventEmitter {
     try {
       this.logger.debug('Detecting Codex capabilities', { sessionId: this.sessionId });
       
-      const result = await execAsync('codex --version', {
+      // Test 1: Get version information
+      const versionResult = await execAsync('codex --version', {
         cwd: this.workingDirectory,
         timeout: 10000
       });
+      const version = versionResult.stdout.trim();
 
-      const version = result.stdout.trim();
+      // Test 2: Get help information to detect available features
+      let helpOutput = '';
+      let availableModels: string[] = [];
+      let features: string[] = [];
       
+      try {
+        const helpResult = await execAsync('codex --help', {
+          cwd: this.workingDirectory,
+          timeout: 5000
+        });
+        helpOutput = helpResult.stdout + helpResult.stderr;
+      } catch (error) {
+        this.logger.debug('Could not get help output', { sessionId: this.sessionId });
+      }
+
+      // Test 3: Check for JSON mode support
+      let supportsJson = false;
+      try {
+        await execAsync('codex --help | grep -i json', {
+          cwd: this.workingDirectory,
+          timeout: 3000
+        });
+        supportsJson = true;
+        features.push('json_mode');
+      } catch (error) {
+        // JSON mode not supported
+      }
+
+      // Test 4: Check for model selection support
+      let supportsModelSelection = false;
+      if (helpOutput.includes('--model') || helpOutput.includes('-m ')) {
+        supportsModelSelection = true;
+        features.push('model_selection');
+        
+        // Try to detect available models
+        const modelPatterns = [
+          /(?:model|models?):\s*([^\n]+)/gi,
+          /available.*models?:\s*([^\n]+)/gi,
+          /(?:-m|--model)\s+(?:\w+\s+)*\{([^}]+)\}/gi
+        ];
+        
+        for (const pattern of modelPatterns) {
+          const matches = helpOutput.matchAll(pattern);
+          for (const match of matches) {
+            if (match[1]) {
+              const models = match[1]
+                .split(/[,|\s]+/)
+                .map(m => m.trim())
+                .filter(m => m.length > 0 && !['or', 'and', '{', '}'].includes(m));
+              availableModels.push(...models);
+            }
+          }
+        }
+        
+        // Remove duplicates and common non-model words
+        availableModels = [...new Set(availableModels)]
+          .filter(model => !['default', 'latest', 'available', 'options'].includes(model.toLowerCase()));
+      }
+
+      // Test 5: Check for workspace/directory mode
+      let supportsWorkspaceMode = false;
+      if (helpOutput.includes('--workspace') || helpOutput.includes('--directory') || helpOutput.includes('--cwd')) {
+        supportsWorkspaceMode = true;
+        features.push('workspace_mode');
+      }
+
+      // Test 6: Check for file operation support
+      let supportsFileOperations = false;
+      const filePatterns = ['--file', '--read', '--write', '--edit'];
+      if (filePatterns.some(pattern => helpOutput.includes(pattern))) {
+        supportsFileOperations = true;
+        features.push('file_operations');
+      }
+
+      // Test 7: Check for plan API support
+      let supportsPlanApi = false;
+      const planPatterns = ['plan', 'planning', '--plan', 'task'];
+      if (planPatterns.some(pattern => helpOutput.toLowerCase().includes(pattern))) {
+        supportsPlanApi = true;
+        features.push('plan_api');
+      }
+
+      // Test 8: Estimate max tokens (heuristic based on version/help)
+      let maxTokens: number | undefined;
+      const tokenMatch = helpOutput.match(/(?:max|token|tokens?)[^\d]*(\d{3,})/i);
+      if (tokenMatch) {
+        maxTokens = parseInt(tokenMatch[1]);
+        features.push('token_limits');
+      }
+
+      // Set streaming to false since we're using exec mode
+      const supportsStreaming = false;
+
       this.capabilities = {
-        supportsJson: false, // v0.16.0 doesn't seem to have JSON mode
-        supportsStreaming: false, // No real streaming in exec mode
-        supportsPlanApi: false, // No plan API detected
-        version
+        supportsJson,
+        supportsStreaming,
+        supportsPlanApi,
+        supportsModelSelection,
+        supportsWorkspaceMode,
+        supportsFileOperations,
+        maxTokens,
+        availableModels,
+        version,
+        features
       };
 
       this.logger.info('Detected Codex capabilities', {
         sessionId: this.sessionId,
-        capabilities: this.capabilities
+        capabilities: this.capabilities,
+        detectedFeatures: features.length,
+        availableModelsCount: availableModels.length
       });
 
     } catch (error: any) {
-      this.logger.warn('Could not detect Codex capabilities', {
+      // Create error context for structured logging  
+      const errorContext = createErrorContext(
+        this.sessionId,
+        undefined,
+        this.workingDirectory,
+        undefined,
+        'capability_detection',
+        { phase: 'version_detection' }
+      );
+
+      const categorizedError = categorizeError(error, errorContext, ErrorCategory.CODEX_CLI);
+      
+      this.logger.logError(categorizedError, {
         sessionId: this.sessionId,
-        error: error.message
+        phase: 'capability_detection'
       });
       
+      // Fallback capabilities
       this.capabilities = {
         supportsJson: false,
         supportsStreaming: false,
         supportsPlanApi: false,
-        version: 'unknown'
+        supportsModelSelection: false,
+        supportsWorkspaceMode: false,
+        supportsFileOperations: false,
+        availableModels: [],
+        version: 'unknown',
+        features: []
       };
     }
   }
