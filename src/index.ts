@@ -13,6 +13,7 @@ import winston from 'winston';
 
 import { CodexClient } from './codex-client.js';
 import { ConversationManager } from './conversation.js';
+import { SessionManager } from './session-manager.js';
 import { chunkResponse, formatPaginatedResponse, estimateTokens } from './token-utils.js';
 
 // Load environment variables
@@ -37,6 +38,7 @@ const logger = winston.createLogger({
 
 // Initialize components
 const codexClient = new CodexClient();
+const sessionManager = new SessionManager(logger);
 const conversationManager = new ConversationManager(
   parseInt(process.env.MAX_CONVERSATIONS || '50'),
   parseInt(process.env.MAX_CONVERSATION_HISTORY || '100')
@@ -74,7 +76,10 @@ const ConsultCodexSchema = z.object({
   model: z.string().optional().describe('Model to use (e.g., "o3", "gpt-5")'),
   temperature: z.number().min(0).max(2).default(0.7).describe('Sampling temperature'),
   page: z.number().int().min(1).default(1).describe('Page number for pagination (default: 1)'),
-  max_tokens_per_page: z.number().int().min(5000).max(20000).default(18000).describe('Maximum tokens per page (default: 18000)')
+  max_tokens_per_page: z.number().int().min(5000).max(20000).default(18000).describe('Maximum tokens per page (default: 18000)'),
+  session_id: z.string().optional().describe('Session ID for persistent context (auto-generated if not provided)'),
+  workspace_path: z.string().optional().describe('Workspace path for repository isolation (defaults to current working directory)'),
+  streaming: z.boolean().default(false).describe('Enable streaming responses for real-time updates')
 });
 
 const StartConversationSchema = z.object({
@@ -99,6 +104,19 @@ const GetConversationMetadataSchema = z.object({
 const SummarizeConversationSchema = z.object({
   conversation_id: z.string().describe('Conversation ID'),
   keep_last_n: z.number().int().min(0).max(50).default(5).describe('How many recent messages to keep verbatim')
+});
+
+const CancelRequestSchema = z.object({
+  session_id: z.string().describe('Session ID to cancel operations for'),
+  force: z.boolean().default(false).describe('Force kill the session process')
+});
+
+const GetSessionHealthSchema = z.object({
+  session_id: z.string().optional().describe('Specific session ID to check (optional - checks all if not provided)')
+});
+
+const RestartSessionSchema = z.object({
+  session_id: z.string().describe('Session ID to restart')
 });
 
 // Create MCP server
@@ -178,6 +196,10 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
   
   try {
+    // Generate session ID if not provided
+    const sessionId = params.session_id || `session_${requestId}`;
+    const workspacePath = params.workspace_path || process.cwd();
+    
     // Clean expired cache entries periodically
     if (responseCache.size > 0 && Math.random() < 0.1) {
       cleanExpiredCache();
@@ -202,34 +224,76 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
     }
 
     // Generate cache key for this request (excluding page number)
-    const cacheKey = getCacheKey(params.prompt, params.context, params.model);
+    const cacheKey = getCacheKey(params.prompt + sessionId, params.context, params.model);
     let fullResponse: string;
 
     // Check cache first (only for page 1 or if we have a cached response)
     const cachedEntry = responseCache.get(cacheKey);
     if (cachedEntry && (Date.now() - cachedEntry.timestamp) < cachedEntry.ttl) {
       fullResponse = cachedEntry.response;
-      logger.info(`Using cached response for page ${params.page}`, { requestId, cacheKey });
+      logger.info(`Using cached response for page ${params.page}`, { requestId, cacheKey, sessionId });
     } else {
       // Only call Codex for page 1 or if not cached
       if (params.page === 1 || !cachedEntry) {
-        logger.info(`Calling Codex CLI for new request`, { requestId, model: params.model });
-        
-        // Create response using Codex CLI
-        const response = await codexClient.createResponse({
-          input,
+        logger.info(`Calling Codex via session manager`, { 
+          requestId, 
+          sessionId,
+          workspacePath,
           model: params.model,
-          temperature: params.temperature
+          streaming: params.streaming
         });
+        
+        // Build command args
+        const commandArgs = ['exec'];
+        if (params.model) {
+          commandArgs.push('--model', params.model);
+        }
+        commandArgs.push('--full-auto', '--skip-git-repo-check');
+        commandArgs.push(input);
+
+        // Collection for streaming events
+        const streamingEvents: any[] = [];
+        
+        // Send command through session manager
+        const response = await sessionManager.sendCommand(
+          sessionId,
+          {
+            args: commandArgs,
+            input,
+            timeout: 120000
+          },
+          workspacePath,
+          params.streaming ? (event) => {
+            streamingEvents.push(event);
+            logger.debug('Streaming event', {
+              requestId,
+              sessionId,
+              eventType: event.type,
+              timestamp: event.timestamp
+            });
+          } : undefined
+        );
 
         if (!response.success) {
           return {
             type: 'text',
-            text: `❌ Error: ${response.error || 'Failed to consult Codex'}`
+            text: `❌ Error: ${response.error || 'Failed to consult Codex'}\n\nSession: ${sessionId}`
           };
         }
 
         fullResponse = response.text;
+        
+        // Include streaming events in response if enabled
+        if (params.streaming && streamingEvents.length > 0) {
+          const streamingInfo = streamingEvents
+            .filter(e => e.type === 'thinking' || e.type === 'progress')
+            .map(e => `[${e.type.toUpperCase()}] ${e.data.text || JSON.stringify(e.data)}`)
+            .join('\n');
+          
+          if (streamingInfo) {
+            fullResponse = `${streamingInfo}\n\n---\n\n${fullResponse}`;
+          }
+        }
         
         // Cache the full response
         responseCache.set(cacheKey, {
@@ -240,14 +304,16 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
         
         logger.info(`Cached response`, { 
           requestId, 
+          sessionId,
           cacheKey, 
           responseLength: fullResponse.length,
-          estimatedTokens: estimateTokens(fullResponse).estimatedTokens
+          estimatedTokens: estimateTokens(fullResponse).estimatedTokens,
+          streamingEvents: streamingEvents.length
         });
       } else {
         return {
           type: 'text',
-          text: `❌ Error: Page ${params.page} requested but no cached response available. Please start with page 1.`
+          text: `❌ Error: Page ${params.page} requested but no cached response available. Please start with page 1.\n\nSession: ${sessionId}`
         };
       }
     }
@@ -258,22 +324,25 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
 
     logger.info(`Returning paginated response`, {
       requestId,
+      sessionId,
       page: params.page,
       totalPages: chunk.totalChunks,
       chunkTokens: chunk.tokenEstimate.estimatedTokens,
       totalTokens: estimateTokens(fullResponse).estimatedTokens
     });
 
-    // Return in proper MCP format
+    // Return in proper MCP format with session info
+    const responseText = `${paginatedText}\n\n---\n💡 Session: \`${sessionId}\` | Workspace: \`${workspacePath}\``;
+    
     return {
       type: 'text',
-      text: paginatedText
+      text: responseText
     };
   } catch (error: any) {
     logger.error('Error consulting Codex:', error);
     return {
       type: 'text',
-      text: `❌ Error: ${error.message || 'Failed to consult Codex'}`
+      text: `❌ Error: ${error.message || 'Failed to consult Codex'}\n\nRequest ID: ${requestId}`
     };
   }
 }
@@ -408,6 +477,111 @@ async function handleSummarizeConversation(args: any): Promise<any> {
   return { type: 'text', text: `✅ Conversation summarized. Kept last ${keep} messages.` };
 }
 
+async function handleCancelRequest(args: any): Promise<any> {
+  const params = CancelRequestSchema.parse(args);
+  
+  try {
+    logger.info('Cancelling session operations', { sessionId: params.session_id, force: params.force });
+    
+    if (params.force) {
+      await sessionManager.destroySession(params.session_id);
+      return { 
+        type: 'text', 
+        text: `🛑 Session ${params.session_id} forcefully terminated and destroyed.` 
+      };
+    } else {
+      await sessionManager.restart(params.session_id);
+      return { 
+        type: 'text', 
+        text: `⚡ Session ${params.session_id} restarted to cancel ongoing operations.` 
+      };
+    }
+  } catch (error: any) {
+    logger.error('Error cancelling request:', error);
+    return { 
+      type: 'text', 
+      text: `❌ Failed to cancel session ${params.session_id}: ${error.message}` 
+    };
+  }
+}
+
+async function handleGetSessionHealth(args: any): Promise<any> {
+  const params = GetSessionHealthSchema.parse(args);
+  
+  try {
+    const healthCheck = await sessionManager.healthCheck(params.session_id);
+    
+    if (params.session_id) {
+      const session = healthCheck.sessions[0];
+      if (!session) {
+        return { type: 'text', text: `❌ Session ${params.session_id} not found.` };
+      }
+      
+      const status = session.status === 'ready' ? '✅' : 
+                    session.status === 'error' ? '❌' : 
+                    session.status === 'starting' ? '⏳' : '🔄';
+      
+      return {
+        type: 'text',
+        text: `${status} Session: ${session.id}
+📂 Workspace: ${session.workspacePath}
+🏷️  Workspace ID: ${session.workspaceId}
+📊 Status: ${session.status}
+🕒 Created: ${session.created.toISOString()}
+⚡ Last Active: ${session.lastActive.toISOString()}
+📈 Requests: ${session.requestCount}
+🧠 Capabilities: ${session.capabilities ? JSON.stringify(session.capabilities, null, 2) : 'Unknown'}`
+      };
+    } else {
+      // Show all sessions
+      if (healthCheck.sessions.length === 0) {
+        return { type: 'text', text: '📭 No active sessions.' };
+      }
+      
+      const sessionList = healthCheck.sessions.map(session => {
+        const status = session.status === 'ready' ? '✅' : 
+                      session.status === 'error' ? '❌' : 
+                      session.status === 'starting' ? '⏳' : '🔄';
+        return `${status} ${session.id} (${session.workspaceId}) - ${session.requestCount} requests`;
+      }).join('\n');
+      
+      return {
+        type: 'text',
+        text: `🖥️  Active Sessions (${healthCheck.sessions.length}):
+${sessionList}
+
+🏥 Overall Health: ${healthCheck.healthy ? '✅ Healthy' : '⚠️  Issues Detected'}`
+      };
+    }
+  } catch (error: any) {
+    logger.error('Error checking session health:', error);
+    return { 
+      type: 'text', 
+      text: `❌ Health check failed: ${error.message}` 
+    };
+  }
+}
+
+async function handleRestartSession(args: any): Promise<any> {
+  const params = RestartSessionSchema.parse(args);
+  
+  try {
+    logger.info('Restarting session', { sessionId: params.session_id });
+    await sessionManager.restart(params.session_id);
+    
+    return { 
+      type: 'text', 
+      text: `🔄 Session ${params.session_id} restarted successfully.` 
+    };
+  } catch (error: any) {
+    logger.error('Error restarting session:', error);
+    return { 
+      type: 'text', 
+      text: `❌ Failed to restart session ${params.session_id}: ${error.message}` 
+    };
+  }
+}
+
 // Register tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -440,6 +614,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: 'summarize_conversation',
       description: 'Summarize a conversation to reduce context size',
       inputSchema: zodToJsonSchema(SummarizeConversationSchema) as any
+    },
+    {
+      name: 'cancel_request',
+      description: 'Cancel ongoing operations in a session or force terminate it',
+      inputSchema: zodToJsonSchema(CancelRequestSchema) as any
+    },
+    {
+      name: 'get_session_health',
+      description: 'Check health status of sessions and get diagnostics',
+      inputSchema: zodToJsonSchema(GetSessionHealthSchema) as any
+    },
+    {
+      name: 'restart_session',
+      description: 'Restart a specific session to recover from errors',
+      inputSchema: zodToJsonSchema(RestartSessionSchema) as any
     }
   ]
 }));
@@ -478,6 +667,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       
       case 'summarize_conversation':
         return { content: [toContent(await handleSummarizeConversation(args))] };
+      
+      case 'cancel_request':
+        return { content: [toContent(await handleCancelRequest(args))] };
+      
+      case 'get_session_health':
+        return { content: [toContent(await handleGetSessionHealth(args))] };
+      
+      case 'restart_session':
+        return { content: [toContent(await handleRestartSession(args))] };
       
       default:
         throw new Error(`Unknown tool: ${name}`);
@@ -521,11 +719,13 @@ async function main() {
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
   logger.info('Shutting down Codex MCP Server...');
+  await sessionManager.shutdown();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   logger.info('Shutting down Codex MCP Server...');
+  await sessionManager.shutdown();
   process.exit(0);
 });
 
