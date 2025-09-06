@@ -123,53 +123,126 @@ node test-mcp-protocol.js
 node test-tools.js
 ```
 
-## Usage in Claude
+## MCP Client Discovery & Usage
 
-Once configured, you can use the following tools in Claude:
+### How MCP Clients Understand This Server
 
-### Basic Usage
+MCP clients (like Claude Code) automatically discover available tools through the Model Context Protocol:
+
+#### 1. **Automatic Tool Discovery**
+The server exposes 9 tools with full JSON schemas:
+- `consult_codex` - Core Codex interaction with advanced features
+- `get_session_health` - Monitor and diagnose sessions  
+- `cancel_request`, `restart_session` - Session management
+- `start_conversation`, `continue_conversation` - Conversation workflows
+- `set_conversation_options`, `get_conversation_metadata`, `summarize_conversation` - Advanced conversation control
+
+#### 2. **Progressive Feature Discovery**
+Users naturally discover capabilities through:
+- **Tool descriptions** in MCP protocol
+- **Response metadata** showing session IDs and workspace paths
+- **Error messages** that guide proper usage
+- **Rich output** from Codex CLI operations
+
+#### 3. **Self-Documenting Responses**
+Every response includes helpful context:
+```
+Session: `my-session` | Workspace: `/path/to/repo`
+```
+
+## Usage Patterns
+
+### **Level 1: Basic Usage**
 ```
 @codex What is the best way to implement error handling in Node.js?
 ```
 
-### With Workspace Isolation
+### **Level 2: Workspace-Aware Development**
 ```
 @codex Based on this code: [attach file], how can I optimize the performance?
 # Automatically uses current repository workspace for isolation
 ```
 
-### Persistent Sessions
+### **Level 3: Persistent Sessions** 
 ```
-@codex {"session_id": "my-feature", "prompt": "Help me implement user authentication"}
-@codex {"session_id": "my-feature", "prompt": "Now add password reset functionality"}  
-# Context preserved across requests
-```
-
-### Streaming Updates
-```
-@codex {"streaming": true, "prompt": "Refactor this large codebase"}
-# See real-time thinking and progress events
+@codex {"session_id": "auth-feature", "prompt": "Help me implement user authentication"}
+@codex {"session_id": "auth-feature", "prompt": "Now add password reset functionality"}  
+# Session maintains workspace context and request history
 ```
 
-### Session Management
+### **Level 4: Advanced Features**
+```json
+{
+  "session_id": "complex-task",
+  "workspace_path": "/specific/repo", 
+  "streaming": true,
+  "prompt": "Analyze and refactor this large codebase",
+  "page": 1,
+  "max_tokens_per_page": 15000
+}
 ```
-@codex_health  # Check all session status
-@codex_cancel {"session_id": "my-feature"}  # Cancel operations
-@codex_restart {"session_id": "my-feature"}  # Recover from errors
+
+### **Session Management**
+```
+@get_session_health                           # Monitor all sessions
+@get_session_health {"session_id": "my-task"} # Check specific session
+@cancel_request {"session_id": "stuck-task"}  # Cancel operations  
+@restart_session {"session_id": "failed"}     # Recover from errors
 ```
 
-## Differences from GPT-5 MCP Server
+### **Multi-Repository Workflows**
+```
+# Work on frontend
+@codex {"workspace_path": "/projects/frontend", "session_id": "ui", "prompt": "Update React components"}
 
-**Removed:**
-- Cost tracking and reporting
-- Budget limits and confirmations
-- Token usage estimation
-- OpenAI API integration
+# Switch to backend  
+@codex {"workspace_path": "/projects/backend", "session_id": "api", "prompt": "Add new API endpoints"}
 
-**Added:**
-- Codex CLI integration
-- Simplified configuration
-- Git repo check bypass for programmatic usage
+# Sessions remain isolated by workspace
+@get_session_health  # Shows both sessions with different workspace IDs
+```
+
+## API Reference
+
+### `consult_codex`
+Core Codex interaction with advanced features.
+
+**Parameters:**
+- `prompt` (string, required): The prompt to send to Codex
+- `session_id` (string, optional): Session ID for persistent context
+- `workspace_path` (string, optional): Workspace path for repository isolation
+- `context` (string, optional): Additional context for the prompt
+- `streaming` (boolean, optional): Enable streaming responses
+- `model` (string, optional): Model to use (e.g., "o3", "gpt-5")
+- `temperature` (number, optional): Sampling temperature (0.0-2.0)
+- `page` (number, optional): Page number for pagination
+- `max_tokens_per_page` (number, optional): Maximum tokens per page
+
+**Response:** Rich Codex output with session and workspace metadata
+
+### `get_session_health`
+Monitor session status and diagnostics.
+
+**Parameters:**
+- `session_id` (string, optional): Specific session to check
+
+**Response:** Session status, workspace info, capabilities, and request counts
+
+### `cancel_request` / `restart_session`
+Session management and recovery.
+
+**Parameters:**
+- `session_id` (string, required): Target session ID
+- `force` (boolean, optional): Force termination vs graceful restart
+
+**Response:** Operation status and confirmation
+
+### Conversation Tools
+Legacy conversation management (consider using sessions instead):
+- `start_conversation`, `continue_conversation`
+- `set_conversation_options`, `get_conversation_metadata`
+- `summarize_conversation`
+
 
 ## Troubleshooting
 

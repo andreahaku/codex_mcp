@@ -119,6 +119,28 @@ const RestartSessionSchema = z.object({
   session_id: z.string().describe('Session ID to restart')
 });
 
+// Plan Management Tools
+const GetPlanSchema = z.object({
+  session_id: z.string().describe('Session ID to get plan from')
+});
+
+const UpdatePlanSchema = z.object({
+  session_id: z.string().describe('Session ID to update plan for'),
+  plan_updates: z.string().describe('Plan updates or modifications to apply')
+});
+
+const PreviewPatchSchema = z.object({
+  session_id: z.string().describe('Session ID for patch preview'),
+  file_path: z.string().optional().describe('Specific file to preview (optional)'),
+  dry_run: z.boolean().default(true).describe('Preview without applying changes')
+});
+
+const ApplyPatchSchema = z.object({
+  session_id: z.string().describe('Session ID for patch application'),
+  file_path: z.string().optional().describe('Specific file to apply patch to (optional)'),
+  confirm: z.boolean().default(false).describe('Confirm application of destructive changes')
+});
+
 // Create MCP server
 const server = new Server(
   {
@@ -582,6 +604,193 @@ async function handleRestartSession(args: any): Promise<any> {
   }
 }
 
+// Plan Management Tool Handlers
+async function handleGetPlan(args: any): Promise<any> {
+  const params = GetPlanSchema.parse(args);
+  
+  try {
+    logger.info('Getting plan from session', { sessionId: params.session_id });
+    
+    const response = await sessionManager.sendCommand(
+      params.session_id,
+      {
+        args: ['exec', '--full-auto', '--skip-git-repo-check', 'show current plan']
+      }
+    );
+
+    if (!response.success) {
+      return {
+        type: 'text',
+        text: `❌ Failed to get plan from session ${params.session_id}: ${response.error}`
+      };
+    }
+
+    return {
+      type: 'text',
+      text: `📋 **Current Plan - Session ${params.session_id}**
+
+${response.text}
+
+---
+💡 Use \`update_plan\` to modify this plan or \`preview_patch\` to see proposed changes.`
+    };
+  } catch (error: any) {
+    logger.error('Error getting plan:', error);
+    return {
+      type: 'text',
+      text: `❌ Failed to get plan: ${error.message}`
+    };
+  }
+}
+
+async function handleUpdatePlan(args: any): Promise<any> {
+  const params = UpdatePlanSchema.parse(args);
+  
+  try {
+    logger.info('Updating plan for session', { sessionId: params.session_id });
+    
+    const planPrompt = `Update the current plan with these modifications: ${params.plan_updates}`;
+    
+    const response = await sessionManager.sendCommand(
+      params.session_id,
+      {
+        args: ['exec', '--full-auto', '--skip-git-repo-check', planPrompt]
+      }
+    );
+
+    if (!response.success) {
+      return {
+        type: 'text',
+        text: `❌ Failed to update plan for session ${params.session_id}: ${response.error}`
+      };
+    }
+
+    return {
+      type: 'text',
+      text: `✅ **Plan Updated - Session ${params.session_id}**
+
+${response.text}
+
+---
+💡 Use \`get_plan\` to view the updated plan or \`preview_patch\` to see changes.`
+    };
+  } catch (error: any) {
+    logger.error('Error updating plan:', error);
+    return {
+      type: 'text',
+      text: `❌ Failed to update plan: ${error.message}`
+    };
+  }
+}
+
+async function handlePreviewPatch(args: any): Promise<any> {
+  const params = PreviewPatchSchema.parse(args);
+  
+  try {
+    logger.info('Previewing patch for session', { sessionId: params.session_id, filePath: params.file_path });
+    
+    let previewPrompt = 'Show me what changes would be made';
+    if (params.file_path) {
+      previewPrompt += ` to ${params.file_path}`;
+    }
+    if (params.dry_run) {
+      previewPrompt += ' (dry run - do not apply changes)';
+    }
+    
+    const response = await sessionManager.sendCommand(
+      params.session_id,
+      {
+        args: ['exec', '--full-auto', '--skip-git-repo-check', previewPrompt]
+      }
+    );
+
+    if (!response.success) {
+      return {
+        type: 'text',
+        text: `❌ Failed to preview patch for session ${params.session_id}: ${response.error}`
+      };
+    }
+
+    const patchIcon = params.dry_run ? '👁️' : '🔍';
+    
+    return {
+      type: 'text',
+      text: `${patchIcon} **Patch Preview - Session ${params.session_id}**
+${params.file_path ? `File: \`${params.file_path}\`` : 'All Files'}
+
+${response.text}
+
+---
+💡 ${params.dry_run ? 'Use `apply_patch` to apply these changes.' : 'This is a preview of proposed changes.'}`
+    };
+  } catch (error: any) {
+    logger.error('Error previewing patch:', error);
+    return {
+      type: 'text',
+      text: `❌ Failed to preview patch: ${error.message}`
+    };
+  }
+}
+
+async function handleApplyPatch(args: any): Promise<any> {
+  const params = ApplyPatchSchema.parse(args);
+  
+  try {
+    logger.info('Applying patch for session', { 
+      sessionId: params.session_id, 
+      filePath: params.file_path,
+      confirmed: params.confirm 
+    });
+    
+    if (!params.confirm) {
+      return {
+        type: 'text',
+        text: `⚠️  **Confirmation Required - Session ${params.session_id}**
+
+This operation will apply changes to your files. To proceed, set \`confirm: true\`.
+
+💡 Use \`preview_patch\` first to see what changes will be made.`
+      };
+    }
+    
+    let applyPrompt = 'Apply the planned changes';
+    if (params.file_path) {
+      applyPrompt += ` to ${params.file_path}`;
+    }
+    
+    const response = await sessionManager.sendCommand(
+      params.session_id,
+      {
+        args: ['exec', '--full-auto', '--skip-git-repo-check', applyPrompt]
+      }
+    );
+
+    if (!response.success) {
+      return {
+        type: 'text',
+        text: `❌ Failed to apply patch for session ${params.session_id}: ${response.error}`
+      };
+    }
+
+    return {
+      type: 'text',
+      text: `✅ **Patch Applied - Session ${params.session_id}**
+${params.file_path ? `File: \`${params.file_path}\`` : 'All Files'}
+
+${response.text}
+
+---
+🎉 Changes have been applied! Check your workspace for the updates.`
+    };
+  } catch (error: any) {
+    logger.error('Error applying patch:', error);
+    return {
+      type: 'text',
+      text: `❌ Failed to apply patch: ${error.message}`
+    };
+  }
+}
+
 // Register tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -629,6 +838,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: 'restart_session',
       description: 'Restart a specific session to recover from errors',
       inputSchema: zodToJsonSchema(RestartSessionSchema) as any
+    },
+    {
+      name: 'get_plan',
+      description: 'Get the current plan from a Codex session',
+      inputSchema: zodToJsonSchema(GetPlanSchema) as any
+    },
+    {
+      name: 'update_plan',
+      description: 'Update or modify the plan for a Codex session',
+      inputSchema: zodToJsonSchema(UpdatePlanSchema) as any
+    },
+    {
+      name: 'preview_patch',
+      description: 'Preview changes that would be made without applying them',
+      inputSchema: zodToJsonSchema(PreviewPatchSchema) as any
+    },
+    {
+      name: 'apply_patch',
+      description: 'Apply planned changes to files (requires confirmation)',
+      inputSchema: zodToJsonSchema(ApplyPatchSchema) as any
     }
   ]
 }));
@@ -676,6 +905,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       
       case 'restart_session':
         return { content: [toContent(await handleRestartSession(args))] };
+      
+      case 'get_plan':
+        return { content: [toContent(await handleGetPlan(args))] };
+      
+      case 'update_plan':
+        return { content: [toContent(await handleUpdatePlan(args))] };
+      
+      case 'preview_patch':
+        return { content: [toContent(await handlePreviewPatch(args))] };
+      
+      case 'apply_patch':
+        return { content: [toContent(await handleApplyPatch(args))] };
       
       default:
         throw new Error(`Unknown tool: ${name}`);
