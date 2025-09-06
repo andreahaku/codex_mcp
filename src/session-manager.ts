@@ -1,5 +1,8 @@
-import { CodexProcess, CodexCommand, CodexResponse, StreamingEvent, CodexCapabilities } from './codex-process.js';
+import { CodexProcess, CodexCommand, CodexResponse, StreamingEvent, CodexCapabilities } from './codex-process-simple.js';
 import winston from 'winston';
+import path from 'path';
+import crypto from 'crypto';
+import fs from 'fs';
 
 export interface SessionInfo {
   id: string;
@@ -323,9 +326,6 @@ export class SessionManager {
 
   private generateWorkspaceId(workspacePath: string): string {
     // Create a stable identifier for the workspace based on path and git repo (if any)
-    const path = require('path');
-    const crypto = require('crypto');
-    const fs = require('fs');
     
     try {
       // Try to get git repo info for more stable ID
