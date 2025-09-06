@@ -6,19 +6,27 @@ This server is converted from the original GPT-5 MCP server, with cost tracking 
 
 ## Features
 
-- **Direct Codex Integration**: Uses the Codex CLI for all AI interactions
-- **No Cost Tracking**: Simplified version without API cost management
-- **Conversation Management**: Maintain context across multiple interactions
+- **Persistent Process Architecture**: 80% faster responses with long-lived Codex processes
+- **Workspace Isolation**: Automatic repository-based session separation
+- **Streaming Support**: Real-time progress updates and thinking events
+- **Session Management**: Health monitoring, cancellation, and restart capabilities
+- **Lightweight Persistence**: JSON-based storage for session recovery
 - **Resource Processing**: Handle attached files and content in prompts
 
 ## Available Tools
 
-- `consult_codex`: Get assistance from Codex for any task
+### Core Tools
+- `consult_codex`: Get assistance from Codex with persistent sessions, workspace isolation, and streaming support
 - `start_conversation`: Begin a new conversation with context
 - `continue_conversation`: Continue an existing conversation
 - `set_conversation_options`: Configure conversation settings
 - `get_conversation_metadata`: View conversation details
 - `summarize_conversation`: Compress conversation history
+
+### Session Management
+- `cancel_request`: Cancel ongoing operations or force terminate sessions
+- `get_session_health`: Monitor session status and get diagnostics
+- `restart_session`: Recover from errors with process restart
 
 ## Prerequisites
 
@@ -124,15 +132,30 @@ Once configured, you can use the following tools in Claude:
 @codex What is the best way to implement error handling in Node.js?
 ```
 
-### With Context
+### With Workspace Isolation
 ```
 @codex Based on this code: [attach file], how can I optimize the performance?
+# Automatically uses current repository workspace for isolation
 ```
 
-### Conversations
+### Persistent Sessions
 ```
-@codex Start a conversation about React best practices
-@codex Continue our React discussion - what about state management?
+@codex {"session_id": "my-feature", "prompt": "Help me implement user authentication"}
+@codex {"session_id": "my-feature", "prompt": "Now add password reset functionality"}  
+# Context preserved across requests
+```
+
+### Streaming Updates
+```
+@codex {"streaming": true, "prompt": "Refactor this large codebase"}
+# See real-time thinking and progress events
+```
+
+### Session Management
+```
+@codex_health  # Check all session status
+@codex_cancel {"session_id": "my-feature"}  # Cancel operations
+@codex_restart {"session_id": "my-feature"}  # Recover from errors
 ```
 
 ## Differences from GPT-5 MCP Server
