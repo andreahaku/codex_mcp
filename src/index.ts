@@ -13,6 +13,7 @@ import winston from 'winston';
 
 import { CodexClient } from './codex-client.js';
 import { ConversationManager } from './conversation.js';
+import { chunkResponse, formatPaginatedResponse, estimateTokens } from './token-utils.js';
 
 // Load environment variables
 dotenv.config();
@@ -41,12 +42,39 @@ const conversationManager = new ConversationManager(
   parseInt(process.env.MAX_CONVERSATION_HISTORY || '100')
 );
 
-// Define tool schemas (simplified, cost-related parameters removed)
+// Response cache for pagination (TTL: 10 minutes)
+const responseCache = new Map<string, { response: string; timestamp: number; ttl: number }>();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+function cleanExpiredCache() {
+  const now = Date.now();
+  for (const [key, entry] of responseCache.entries()) {
+    if (now - entry.timestamp > entry.ttl) {
+      responseCache.delete(key);
+    }
+  }
+}
+
+function getCacheKey(prompt: string, context?: string, model?: string): string {
+  const content = `${prompt}|${context || ''}|${model || ''}`;
+  // Simple hash for cache key
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    const char = content.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return `codex_${Math.abs(hash).toString(36)}`;
+}
+
+// Define tool schemas with pagination support
 const ConsultCodexSchema = z.object({
   prompt: z.string().describe('The prompt to send to Codex'),
   context: z.string().optional().describe('Additional context for the prompt'),
   model: z.string().optional().describe('Model to use (e.g., "o3", "gpt-5")'),
-  temperature: z.number().min(0).max(2).default(0.7).describe('Sampling temperature')
+  temperature: z.number().min(0).max(2).default(0.7).describe('Sampling temperature'),
+  page: z.number().int().min(1).default(1).describe('Page number for pagination (default: 1)'),
+  max_tokens_per_page: z.number().int().min(5000).max(20000).default(18000).describe('Maximum tokens per page (default: 18000)')
 });
 
 const StartConversationSchema = z.object({
@@ -147,8 +175,14 @@ async function processResources(meta?: any): Promise<string> {
 // Tool handlers
 async function handleConsultCodex(args: any, meta?: any): Promise<any> {
   const params = ConsultCodexSchema.parse(args);
+  const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
   
   try {
+    // Clean expired cache entries periodically
+    if (responseCache.size > 0 && Math.random() < 0.1) {
+      cleanExpiredCache();
+    }
+
     // Process any attached resources
     const resourceContent = await processResources(meta);
     
@@ -167,24 +201,73 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
       input = `Context:\n${params.context}\n\nRequest:\n${params.prompt}`;
     }
 
-    // Create response using Codex CLI
-    const response = await codexClient.createResponse({
-      input,
-      model: params.model,
-      temperature: params.temperature
-    });
+    // Generate cache key for this request (excluding page number)
+    const cacheKey = getCacheKey(params.prompt, params.context, params.model);
+    let fullResponse: string;
 
-    if (!response.success) {
-      return {
-        type: 'text',
-        text: `❌ Error: ${response.error || 'Failed to consult Codex'}`
-      };
+    // Check cache first (only for page 1 or if we have a cached response)
+    const cachedEntry = responseCache.get(cacheKey);
+    if (cachedEntry && (Date.now() - cachedEntry.timestamp) < cachedEntry.ttl) {
+      fullResponse = cachedEntry.response;
+      logger.info(`Using cached response for page ${params.page}`, { requestId, cacheKey });
+    } else {
+      // Only call Codex for page 1 or if not cached
+      if (params.page === 1 || !cachedEntry) {
+        logger.info(`Calling Codex CLI for new request`, { requestId, model: params.model });
+        
+        // Create response using Codex CLI
+        const response = await codexClient.createResponse({
+          input,
+          model: params.model,
+          temperature: params.temperature
+        });
+
+        if (!response.success) {
+          return {
+            type: 'text',
+            text: `❌ Error: ${response.error || 'Failed to consult Codex'}`
+          };
+        }
+
+        fullResponse = response.text;
+        
+        // Cache the full response
+        responseCache.set(cacheKey, {
+          response: fullResponse,
+          timestamp: Date.now(),
+          ttl: CACHE_TTL
+        });
+        
+        logger.info(`Cached response`, { 
+          requestId, 
+          cacheKey, 
+          responseLength: fullResponse.length,
+          estimatedTokens: estimateTokens(fullResponse).estimatedTokens
+        });
+      } else {
+        return {
+          type: 'text',
+          text: `❌ Error: Page ${params.page} requested but no cached response available. Please start with page 1.`
+        };
+      }
     }
+
+    // Chunk the response for pagination
+    const chunk = chunkResponse(fullResponse, params.max_tokens_per_page, params.page);
+    const paginatedText = formatPaginatedResponse(chunk, fullResponse, requestId);
+
+    logger.info(`Returning paginated response`, {
+      requestId,
+      page: params.page,
+      totalPages: chunk.totalChunks,
+      chunkTokens: chunk.tokenEstimate.estimatedTokens,
+      totalTokens: estimateTokens(fullResponse).estimatedTokens
+    });
 
     // Return in proper MCP format
     return {
       type: 'text',
-      text: response.text
+      text: paginatedText
     };
   } catch (error: any) {
     logger.error('Error consulting Codex:', error);
@@ -330,7 +413,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'consult_codex',
-      description: 'Consult Codex for planning or coding assistance',
+      description: 'Consult Codex for planning or coding assistance. Supports pagination for large responses to stay within MCP token limits. Use page parameter for subsequent chunks.',
       inputSchema: zodToJsonSchema(ConsultCodexSchema) as any
     },
     {
