@@ -210,6 +210,15 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
     // Generate session ID if not provided
     const sessionId = params.session_id || `session_${requestId}`;
     const workspacePath = params.workspace_path || process.cwd();
+
+    // Auto-create conversation if session doesn't exist in conversation manager
+    if (!conversationManager.getConversation(sessionId)) {
+      conversationManager.startConversationWithId(
+        sessionId,
+        `Codex Session: ${sessionId}`,
+        `Codex session for ${workspacePath}`
+      );
+    }
     
     // Clean expired cache entries periodically
     if (responseCache.size > 0 && Math.random() < 0.1) {
@@ -413,11 +422,19 @@ async function handleContinueConversation(args: any): Promise<any> {
     const messages = conversationManager.formatForAPI(params.session_id, undefined, contextLimit);
     const instructions = conversationManager.getInstructions(params.session_id);
 
-    // Create response using Codex CLI
-    const response = await codexClient.createResponse({
-      input: messages,
-      instructions
-    });
+    // Format input for Codex - combine conversation history
+    const conversationText = messages.map(msg => `${msg.role.toUpperCase()}: ${msg.content}`).join('\n\n');
+    const finalInput = instructions ? `${instructions}\n\n${conversationText}` : conversationText;
+
+    // Use session manager to send command (reusing the session)
+    const response = await sessionManager.sendCommand(
+      params.session_id,
+      {
+        args: ['exec', '--full-auto', '--skip-git-repo-check', finalInput],
+        input: finalInput,
+        timeout: 120000
+      }
+    );
 
     if (!response.success) {
       return {
