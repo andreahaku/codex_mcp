@@ -58,76 +58,53 @@ function getCacheKey(prompt: string, context?: string, model?: string): string {
 }
 
 // Define tool schemas with pagination support
-const ConsultCodexSchema = z.object({
-  prompt: z.string().describe('The prompt to send to Codex'),
-  context: z.string().optional().describe('Additional context for the prompt'),
-  model: z.string().optional().describe('Model to use (e.g., "o3", "gpt-5")'),
-  temperature: z.number().min(0).max(2).default(0.7).describe('Sampling temperature'),
-  page: z.number().int().min(1).default(1).describe('Page number for pagination (default: 1)'),
-  max_tokens_per_page: z.number().int().min(5000).max(20000).default(18000).describe('Maximum tokens per page (default: 18000)'),
-  session_id: z.string().optional().describe('Session/Conversation ID for persistent context (auto-generated if not provided)'),
-  workspace_path: z.string().optional().describe('Workspace path for repository isolation (defaults to current working directory)'),
-  streaming: z.boolean().default(false).describe('Enable streaming responses for real-time updates')
+const AskSchema = z.object({
+  prompt: z.string().describe('Prompt text'),
+  context: z.string().optional().describe('Additional context'),
+  model: z.string().optional().describe('Model (e.g., "o3", "gpt-5")'),
+  temp: z.number().min(0).max(2).default(0.7).describe('Temperature'),
+  page: z.number().int().min(1).default(1).describe('Page number (def: 1)'),
+  max_tok: z.number().int().min(5000).max(20000).default(18000).describe('Max tokens/page (def: 18000)'),
+  sid: z.string().optional().describe('Session ID (auto-gen if omitted)'),
+  ws: z.string().optional().describe('Workspace path (def: cwd)'),
+  streaming: z.boolean().default(false).describe('Enable streaming')
 });
 
-const StartConversationSchema = z.object({
-  topic: z.string().describe('The topic or purpose of the conversation'),
-  instructions: z.string().optional().describe('System instructions for the conversation'),
-  session_id: z.string().optional().describe('Optional session ID to link with existing Codex session')
+const ChatStartSchema = z.object({
+  topic: z.string().describe('Conversation topic'),
+  instructions: z.string().optional().describe('System instructions'),
+  sid: z.string().optional().describe('Session ID to link')
 });
 
-const ContinueConversationSchema = z.object({
-  session_id: z.string().describe('The session/conversation ID to continue'),
-  message: z.string().describe('The message to send in the conversation')
+const ChatMsgSchema = z.object({
+  sid: z.string().describe('Session ID'),
+  message: z.string().describe('Message text')
 });
 
-const SetConversationOptionsSchema = z.object({
-  session_id: z.string().describe('Session/Conversation ID'),
-  context_limit: z.number().int().min(1).max(1000).optional().describe('Messages to keep in context window')
+const CancelSchema = z.object({
+  sid: z.string().describe('Session ID'),
+  force: z.boolean().default(false).describe('Force kill process')
 });
 
-const GetConversationMetadataSchema = z.object({
-  session_id: z.string().describe('Session/Conversation ID')
+const StatusSchema = z.object({
+  sid: z.string().optional().describe('Session ID (optional - checks all)')
 });
 
-const SummarizeConversationSchema = z.object({
-  session_id: z.string().describe('Session/Conversation ID'),
-  keep_last_n: z.number().int().min(0).max(50).default(5).describe('How many recent messages to keep verbatim')
+const RestartSchema = z.object({
+  sid: z.string().describe('Session ID')
 });
 
-const CancelRequestSchema = z.object({
-  session_id: z.string().describe('Session ID to cancel operations for'),
-  force: z.boolean().default(false).describe('Force kill the session process')
+// Consolidated Plan Tool
+const PlanSchema = z.object({
+  sid: z.string().describe('Session ID'),
+  updates: z.string().optional().describe('Plan updates (omit to view current)')
 });
 
-const GetSessionHealthSchema = z.object({
-  session_id: z.string().optional().describe('Specific session ID to check (optional - checks all if not provided)')
-});
-
-const RestartSessionSchema = z.object({
-  session_id: z.string().describe('Session ID to restart')
-});
-
-// Plan Management Tools
-const GetPlanSchema = z.object({
-  session_id: z.string().describe('Session ID to get plan from')
-});
-
-const UpdatePlanSchema = z.object({
-  session_id: z.string().describe('Session ID to update plan for'),
-  plan_updates: z.string().describe('Plan updates or modifications to apply')
-});
-
-const PreviewPatchSchema = z.object({
-  session_id: z.string().describe('Session ID for patch preview'),
-  file_path: z.string().optional().describe('Specific file to preview (optional)'),
-  dry_run: z.boolean().default(true).describe('Preview without applying changes')
-});
-
-const ApplyPatchSchema = z.object({
-  session_id: z.string().describe('Session ID for patch application'),
-  file_path: z.string().optional().describe('Specific file to apply patch to (optional)'),
-  confirm: z.boolean().default(false).describe('Confirm application of destructive changes')
+// Consolidated Patch Tool
+const PatchSchema = z.object({
+  sid: z.string().describe('Session ID'),
+  file: z.string().optional().describe('Specific file (optional)'),
+  apply: z.boolean().default(false).describe('Apply changes (def: false=preview)')
 });
 
 // Create MCP server
@@ -202,14 +179,14 @@ async function processResources(meta?: any): Promise<string> {
 }
 
 // Tool handlers
-async function handleConsultCodex(args: any, meta?: any): Promise<any> {
-  const params = ConsultCodexSchema.parse(args);
+async function handleAsk(args: any, meta?: any): Promise<any> {
+  const params = AskSchema.parse(args);
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
-  
+
   try {
     // Generate session ID if not provided
-    const sessionId = params.session_id || `session_${requestId}`;
-    const workspacePath = params.workspace_path || process.cwd();
+    const sessionId = params.sid || `session_${requestId}`;
+    const workspacePath = params.ws || process.cwd();
 
     // Auto-create conversation if session doesn't exist in conversation manager
     if (!conversationManager.getConversation(sessionId)) {
@@ -268,12 +245,15 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
         if (params.model) {
           commandArgs.push('--model', params.model);
         }
+        if (params.temp !== undefined && params.temp !== 0.7) {
+          commandArgs.push('--temperature', params.temp.toString());
+        }
         commandArgs.push('--full-auto', '--skip-git-repo-check');
         commandArgs.push(input);
 
         // Collection for streaming events
         const streamingEvents: any[] = [];
-        
+
         // Send command through session manager
         const response = await sessionManager.sendCommand(
           sessionId,
@@ -339,7 +319,7 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
     }
 
     // Chunk the response for pagination
-    const chunk = chunkResponse(fullResponse, params.max_tokens_per_page, params.page);
+    const chunk = chunkResponse(fullResponse, params.max_tok, params.page);
     const paginatedText = formatPaginatedResponse(chunk, fullResponse, requestId);
 
     logger.info(`Returning paginated response`, {
@@ -367,24 +347,24 @@ async function handleConsultCodex(args: any, meta?: any): Promise<any> {
   }
 }
 
-async function handleStartConversation(args: any): Promise<any> {
-  const params = StartConversationSchema.parse(args);
-  
+async function handleChatStart(args: any): Promise<any> {
+  const params = ChatStartSchema.parse(args);
+
   try {
-    // Use provided session_id or generate a new one
-    const conversationId = params.session_id || conversationManager.startConversation(
+    // Use provided sid or generate a new one
+    const conversationId = params.sid || conversationManager.startConversation(
       params.topic,
       params.instructions
     );
-    
-    // If session_id was provided, create or link the conversation
-    if (params.session_id) {
+
+    // If sid was provided, create or link the conversation
+    if (params.sid) {
       // Try to get existing conversation, or create new one with provided ID
-      let conversation = conversationManager.getConversation(params.session_id);
+      let conversation = conversationManager.getConversation(params.sid);
       if (!conversation) {
         // Create new conversation with the provided ID
         conversationManager.startConversationWithId(
-          params.session_id,
+          params.sid,
           params.topic,
           params.instructions
         );
@@ -404,23 +384,23 @@ async function handleStartConversation(args: any): Promise<any> {
   }
 }
 
-async function handleContinueConversation(args: any): Promise<any> {
-  const params = ContinueConversationSchema.parse(args);
-  
+async function handleChatMsg(args: any): Promise<any> {
+  const params = ChatMsgSchema.parse(args);
+
   try {
     // Get conversation context
-    const conversation = conversationManager.getConversation(params.session_id);
+    const conversation = conversationManager.getConversation(params.sid);
     if (!conversation) {
-      return { type: 'text', text: `❌ Conversation not found: ${params.session_id}` };
+      return { type: 'text', text: `❌ Conversation not found: ${params.sid}` };
     }
 
     // Add user message
-    conversationManager.addMessage(params.session_id, 'user', params.message);
+    conversationManager.addMessage(params.sid, 'user', params.message);
 
     // Get formatted messages for API with context limit
     const contextLimit = parseInt(process.env.MAX_CONVERSATION_CONTEXT || '10');
-    const messages = conversationManager.formatForAPI(params.session_id, undefined, contextLimit);
-    const instructions = conversationManager.getInstructions(params.session_id);
+    const messages = conversationManager.formatForAPI(params.sid, undefined, contextLimit);
+    const instructions = conversationManager.getInstructions(params.sid);
 
     // Format input for Codex - combine conversation history
     const conversationText = messages.map(msg => `${msg.role.toUpperCase()}: ${msg.content}`).join('\n\n');
@@ -428,7 +408,7 @@ async function handleContinueConversation(args: any): Promise<any> {
 
     // Use session manager to send command (reusing the session)
     const response = await sessionManager.sendCommand(
-      params.session_id,
+      params.sid,
       {
         args: ['exec', '--full-auto', '--skip-git-repo-check', finalInput],
         input: finalInput,
@@ -444,370 +424,242 @@ async function handleContinueConversation(args: any): Promise<any> {
     }
 
     // Add assistant response to conversation
-    conversationManager.addMessage(params.session_id, 'assistant', response.text);
+    conversationManager.addMessage(params.sid, 'assistant', response.text);
 
-    return { 
-      type: 'text', 
-      text: `${response.text}\n\n---\n💬 Conversation: ${params.session_id}` 
+    return {
+      type: 'text',
+      text: `${response.text}\n\n---\n💬 Conversation: ${params.sid}`
     };
   } catch (error: any) {
     logger.error('Error continuing conversation:', error);
-    return { 
-      type: 'text', 
-      text: `❌ Error continuing conversation ${params.session_id}: ${error.message || 'Unknown error'}` 
+    return {
+      type: 'text',
+      text: `❌ Error continuing conversation ${params.sid}: ${error.message || 'Unknown error'}`
     };
   }
 }
 
-async function handleSetConversationOptions(args: any): Promise<any> {
-  const params = SetConversationOptionsSchema.parse(args);
+async function handleCancel(args: any): Promise<any> {
+  const params = CancelSchema.parse(args);
+
   try {
-    conversationManager.setOptions(params.session_id, {
-      contextLimit: params.context_limit
-    });
-    return { 
-      type: 'text', 
-      text: `✅ Updated conversation ${params.session_id}${params.context_limit ? `\nContext limit: ${params.context_limit}` : ''}` 
-    };
-  } catch (error: any) {
-    return { type: 'text', text: `❌ Failed to set options: ${error.message || 'Unknown error'}` };
-  }
-}
+    logger.info('Cancelling session operations', { sessionId: params.sid, force: params.force });
 
-async function handleGetConversationMetadata(args: any): Promise<any> {
-  const params = GetConversationMetadataSchema.parse(args);
-  const meta = conversationManager.getMetadata(params.session_id);
-  if (!meta) return { type: 'text', text: `❌ Conversation not found: ${params.session_id}` };
-  return { type: 'text', text: JSON.stringify(meta, null, 2) };
-}
-
-async function handleSummarizeConversation(args: any): Promise<any> {
-  const params = SummarizeConversationSchema.parse(args);
-  const conversation = conversationManager.getConversation(params.session_id);
-  if (!conversation) return { type: 'text', text: `❌ Conversation not found: ${params.session_id}` };
-
-  // Build summary prompt
-  const keep = Math.max(0, params.keep_last_n);
-  const messages = conversation.messages;
-  const hasDev = messages[0]?.role === 'developer';
-  const prefix = hasDev ? messages[0] : null;
-  const headIndex = hasDev ? 1 : 0;
-  const recent = messages.slice(Math.max(headIndex, messages.length - keep));
-  const toSummarize = messages.slice(headIndex, Math.max(headIndex, messages.length - keep));
-
-  const summaryInput = [
-    'Summarize the following conversation messages into a concise brief that preserves key decisions, facts, constraints, and pending questions. Use bullet points. Keep it under 300 words.\n',
-    ...toSummarize.map(m => `${m.role.toUpperCase()}: ${m.content}`)
-  ].join('\n');
-
-  const response = await codexClient.createResponse({
-    input: summaryInput
-  });
-
-  if (!response.success) {
-    return { type: 'text', text: `❌ Failed to summarize conversation: ${response.error}` };
-  }
-
-  // Replace messages with summary + recent
-  const newMessages: any[] = [];
-  if (prefix) newMessages.push(prefix);
-  newMessages.push({ role: 'assistant', content: `Conversation summary (compressed):\n${response.text}`, timestamp: new Date() });
-  for (const m of recent) newMessages.push(m);
-
-  (conversation as any).messages = newMessages as any;
-  conversation.metadata.lastActive = new Date();
-
-  return { type: 'text', text: `✅ Conversation summarized. Kept last ${keep} messages.` };
-}
-
-async function handleCancelRequest(args: any): Promise<any> {
-  const params = CancelRequestSchema.parse(args);
-  
-  try {
-    logger.info('Cancelling session operations', { sessionId: params.session_id, force: params.force });
-    
     if (params.force) {
-      await sessionManager.destroySession(params.session_id);
-      return { 
-        type: 'text', 
-        text: `🛑 Session ${params.session_id} forcefully terminated and destroyed.` 
+      await sessionManager.destroySession(params.sid);
+      return {
+        type: 'text',
+        text: `🛑 Session ${params.sid} forcefully terminated.`
       };
     } else {
-      await sessionManager.restart(params.session_id);
-      return { 
-        type: 'text', 
-        text: `⚡ Session ${params.session_id} restarted to cancel ongoing operations.` 
+      await sessionManager.restart(params.sid);
+      return {
+        type: 'text',
+        text: `⚡ Session ${params.sid} restarted.`
       };
     }
   } catch (error: any) {
     logger.error('Error cancelling request:', error);
-    return { 
-      type: 'text', 
-      text: `❌ Failed to cancel session ${params.session_id}: ${error.message}` 
+    return {
+      type: 'text',
+      text: `❌ Failed to cancel session ${params.sid}: ${error.message}`
     };
   }
 }
 
-async function handleGetSessionHealth(args: any): Promise<any> {
-  const params = GetSessionHealthSchema.parse(args);
-  
+async function handleStatus(args: any): Promise<any> {
+  const params = StatusSchema.parse(args);
+
   try {
-    const healthCheck = await sessionManager.healthCheck(params.session_id);
-    
-    if (params.session_id) {
+    const healthCheck = await sessionManager.healthCheck(params.sid);
+
+    if (params.sid) {
       const session = healthCheck.sessions[0];
       if (!session) {
-        return { type: 'text', text: `❌ Session ${params.session_id} not found.` };
+        return { type: 'text', text: `❌ Session ${params.sid} not found.` };
       }
-      
-      const status = session.status === 'ready' ? '✅' : 
-                    session.status === 'error' ? '❌' : 
+
+      const status = session.status === 'ready' ? '✅' :
+                    session.status === 'error' ? '❌' :
                     session.status === 'starting' ? '⏳' : '🔄';
-      
+
       return {
         type: 'text',
         text: `${status} Session: ${session.id}
 📂 Workspace: ${session.workspacePath}
-🏷️  Workspace ID: ${session.workspaceId}
 📊 Status: ${session.status}
-🕒 Created: ${session.created.toISOString()}
-⚡ Last Active: ${session.lastActive.toISOString()}
-📈 Requests: ${session.requestCount}
-🧠 Capabilities: ${session.capabilities ? JSON.stringify(session.capabilities, null, 2) : 'Unknown'}`
+📈 Requests: ${session.requestCount}`
       };
     } else {
-      // Show all sessions
       if (healthCheck.sessions.length === 0) {
         return { type: 'text', text: '📭 No active sessions.' };
       }
-      
+
       const sessionList = healthCheck.sessions.map(session => {
-        const status = session.status === 'ready' ? '✅' : 
-                      session.status === 'error' ? '❌' : 
+        const status = session.status === 'ready' ? '✅' :
+                      session.status === 'error' ? '❌' :
                       session.status === 'starting' ? '⏳' : '🔄';
-        return `${status} ${session.id} (${session.workspaceId}) - ${session.requestCount} requests`;
+        return `${status} ${session.id} - ${session.requestCount} requests`;
       }).join('\n');
-      
+
       return {
         type: 'text',
-        text: `🖥️  Active Sessions (${healthCheck.sessions.length}):
-${sessionList}
-
-🏥 Overall Health: ${healthCheck.healthy ? '✅ Healthy' : '⚠️  Issues Detected'}`
+        text: `Active Sessions (${healthCheck.sessions.length}):\n${sessionList}`
       };
     }
   } catch (error: any) {
     logger.error('Error checking session health:', error);
-    return { 
-      type: 'text', 
-      text: `❌ Health check failed: ${error.message}` 
+    return {
+      type: 'text',
+      text: `❌ Health check failed: ${error.message}`
     };
   }
 }
 
-async function handleRestartSession(args: any): Promise<any> {
-  const params = RestartSessionSchema.parse(args);
-  
+async function handleRestart(args: any): Promise<any> {
+  const params = RestartSchema.parse(args);
+
   try {
-    logger.info('Restarting session', { sessionId: params.session_id });
-    await sessionManager.restart(params.session_id);
-    
-    return { 
-      type: 'text', 
-      text: `🔄 Session ${params.session_id} restarted successfully.` 
+    logger.info('Restarting session', { sessionId: params.sid });
+    await sessionManager.restart(params.sid);
+
+    return {
+      type: 'text',
+      text: `🔄 Session ${params.sid} restarted successfully.`
     };
   } catch (error: any) {
     logger.error('Error restarting session:', error);
-    return { 
-      type: 'text', 
-      text: `❌ Failed to restart session ${params.session_id}: ${error.message}` 
+    return {
+      type: 'text',
+      text: `❌ Failed to restart session ${params.sid}: ${error.message}`
     };
   }
 }
 
-// Plan Management Tool Handlers
-async function handleGetPlan(args: any): Promise<any> {
-  const params = GetPlanSchema.parse(args);
-  
-  try {
-    logger.info('Getting plan from session', { sessionId: params.session_id });
-    
-    const response = await sessionManager.sendCommand(
-      params.session_id,
-      {
-        args: ['exec', '--full-auto', '--skip-git-repo-check', 'show current plan']
-      }
-    );
+// Consolidated Plan Tool Handler
+async function handlePlan(args: any): Promise<any> {
+  const params = PlanSchema.parse(args);
 
-    if (!response.success) {
+  try {
+    // If updates provided, update plan; otherwise get current plan
+    if (params.updates) {
+      logger.info('Updating plan for session', { sessionId: params.sid });
+      const planPrompt = `Update the current plan with these modifications: ${params.updates}`;
+
+      const response = await sessionManager.sendCommand(
+        params.sid,
+        {
+          args: ['exec', '--full-auto', '--skip-git-repo-check', planPrompt]
+        }
+      );
+
+      if (!response.success) {
+        return {
+          type: 'text',
+          text: `❌ Failed to update plan for session ${params.sid}: ${response.error}`
+        };
+      }
+
       return {
         type: 'text',
-        text: `❌ Failed to get plan from session ${params.session_id}: ${response.error}`
+        text: `✅ Plan Updated - Session ${params.sid}\n\n${response.text}`
+      };
+    } else {
+      logger.info('Getting plan from session', { sessionId: params.sid });
+
+      const response = await sessionManager.sendCommand(
+        params.sid,
+        {
+          args: ['exec', '--full-auto', '--skip-git-repo-check', 'show current plan']
+        }
+      );
+
+      if (!response.success) {
+        return {
+          type: 'text',
+          text: `❌ Failed to get plan: ${response.error}`
+        };
+      }
+
+      return {
+        type: 'text',
+        text: `📋 Current Plan - Session ${params.sid}\n\n${response.text}`
       };
     }
-
-    return {
-      type: 'text',
-      text: `📋 **Current Plan - Session ${params.session_id}**
-
-${response.text}
-
----
-💡 Use \`update_plan\` to modify this plan or \`preview_patch\` to see proposed changes.`
-    };
   } catch (error: any) {
-    logger.error('Error getting plan:', error);
+    logger.error('Error with plan:', error);
     return {
       type: 'text',
-      text: `❌ Failed to get plan: ${error.message}`
+      text: `❌ Failed to handle plan: ${error.message}`
     };
   }
 }
 
-async function handleUpdatePlan(args: any): Promise<any> {
-  const params = UpdatePlanSchema.parse(args);
-  
+// Consolidated Patch Tool Handler
+async function handlePatch(args: any): Promise<any> {
+  const params = PatchSchema.parse(args);
+
   try {
-    logger.info('Updating plan for session', { sessionId: params.session_id });
-    
-    const planPrompt = `Update the current plan with these modifications: ${params.plan_updates}`;
-    
-    const response = await sessionManager.sendCommand(
-      params.session_id,
-      {
-        args: ['exec', '--full-auto', '--skip-git-repo-check', planPrompt]
+    if (params.apply) {
+      // Apply mode
+      logger.info('Applying patch for session', { sessionId: params.sid, file: params.file });
+
+      let applyPrompt = 'Apply the planned changes';
+      if (params.file) {
+        applyPrompt += ` to ${params.file}`;
       }
-    );
 
-    if (!response.success) {
-      return {
-        type: 'text',
-        text: `❌ Failed to update plan for session ${params.session_id}: ${response.error}`
-      };
-    }
+      const response = await sessionManager.sendCommand(
+        params.sid,
+        {
+          args: ['exec', '--full-auto', '--skip-git-repo-check', applyPrompt]
+        }
+      );
 
-    return {
-      type: 'text',
-      text: `✅ **Plan Updated - Session ${params.session_id}**
-
-${response.text}
-
----
-💡 Use \`get_plan\` to view the updated plan or \`preview_patch\` to see changes.`
-    };
-  } catch (error: any) {
-    logger.error('Error updating plan:', error);
-    return {
-      type: 'text',
-      text: `❌ Failed to update plan: ${error.message}`
-    };
-  }
-}
-
-async function handlePreviewPatch(args: any): Promise<any> {
-  const params = PreviewPatchSchema.parse(args);
-  
-  try {
-    logger.info('Previewing patch for session', { sessionId: params.session_id, filePath: params.file_path });
-    
-    let previewPrompt = 'Show me what changes would be made';
-    if (params.file_path) {
-      previewPrompt += ` to ${params.file_path}`;
-    }
-    if (params.dry_run) {
-      previewPrompt += ' (dry run - do not apply changes)';
-    }
-    
-    const response = await sessionManager.sendCommand(
-      params.session_id,
-      {
-        args: ['exec', '--full-auto', '--skip-git-repo-check', previewPrompt]
+      if (!response.success) {
+        return {
+          type: 'text',
+          text: `❌ Failed to apply patch: ${response.error}`
+        };
       }
-    );
 
-    if (!response.success) {
       return {
         type: 'text',
-        text: `❌ Failed to preview patch for session ${params.session_id}: ${response.error}`
+        text: `✅ Patch Applied - Session ${params.sid}\n${params.file ? `File: ${params.file}\n` : ''}\n${response.text}`
       };
-    }
+    } else {
+      // Preview mode
+      logger.info('Previewing patch for session', { sessionId: params.sid, file: params.file });
 
-    const patchIcon = params.dry_run ? '👁️' : '🔍';
-    
-    return {
-      type: 'text',
-      text: `${patchIcon} **Patch Preview - Session ${params.session_id}**
-${params.file_path ? `File: \`${params.file_path}\`` : 'All Files'}
-
-${response.text}
-
----
-💡 ${params.dry_run ? 'Use `apply_patch` to apply these changes.' : 'This is a preview of proposed changes.'}`
-    };
-  } catch (error: any) {
-    logger.error('Error previewing patch:', error);
-    return {
-      type: 'text',
-      text: `❌ Failed to preview patch: ${error.message}`
-    };
-  }
-}
-
-async function handleApplyPatch(args: any): Promise<any> {
-  const params = ApplyPatchSchema.parse(args);
-  
-  try {
-    logger.info('Applying patch for session', { 
-      sessionId: params.session_id, 
-      filePath: params.file_path,
-      confirmed: params.confirm 
-    });
-    
-    if (!params.confirm) {
-      return {
-        type: 'text',
-        text: `⚠️  **Confirmation Required - Session ${params.session_id}**
-
-This operation will apply changes to your files. To proceed, set \`confirm: true\`.
-
-💡 Use \`preview_patch\` first to see what changes will be made.`
-      };
-    }
-    
-    let applyPrompt = 'Apply the planned changes';
-    if (params.file_path) {
-      applyPrompt += ` to ${params.file_path}`;
-    }
-    
-    const response = await sessionManager.sendCommand(
-      params.session_id,
-      {
-        args: ['exec', '--full-auto', '--skip-git-repo-check', applyPrompt]
+      let previewPrompt = 'Show what changes would be made';
+      if (params.file) {
+        previewPrompt += ` to ${params.file}`;
       }
-    );
 
-    if (!response.success) {
+      const response = await sessionManager.sendCommand(
+        params.sid,
+        {
+          args: ['exec', '--full-auto', '--skip-git-repo-check', previewPrompt]
+        }
+      );
+
+      if (!response.success) {
+        return {
+          type: 'text',
+          text: `❌ Failed to preview patch: ${response.error}`
+        };
+      }
+
       return {
         type: 'text',
-        text: `❌ Failed to apply patch for session ${params.session_id}: ${response.error}`
+        text: `👁️ Patch Preview - Session ${params.sid}\n${params.file ? `File: ${params.file}\n` : ''}\n${response.text}`
       };
     }
-
-    return {
-      type: 'text',
-      text: `✅ **Patch Applied - Session ${params.session_id}**
-${params.file_path ? `File: \`${params.file_path}\`` : 'All Files'}
-
-${response.text}
-
----
-🎉 Changes have been applied! Check your workspace for the updates.`
-    };
   } catch (error: any) {
-    logger.error('Error applying patch:', error);
+    logger.error('Error with patch:', error);
     return {
       type: 'text',
-      text: `❌ Failed to apply patch: ${error.message}`
+      text: `❌ Failed to handle patch: ${error.message}`
     };
   }
 }
@@ -816,69 +668,44 @@ ${response.text}
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: 'codex_ask',
-      description: '🌟 Ask Codex for help with coding, planning, or analysis. Supports persistent sessions, streaming, and pagination for large responses.',
-      inputSchema: zodToJsonSchema(ConsultCodexSchema) as any
+      name: 'ask',
+      description: 'Ask Codex for help with coding, planning, or analysis',
+      inputSchema: zodToJsonSchema(AskSchema) as any
     },
     {
-      name: 'codex_chat_start',
-      description: '💬 Start new conversation with Codex (links to session)',
-      inputSchema: zodToJsonSchema(StartConversationSchema) as any
+      name: 'chat_start',
+      description: 'Start conversation with Codex',
+      inputSchema: zodToJsonSchema(ChatStartSchema) as any
     },
     {
-      name: 'codex_chat_continue',
-      description: 'Continue existing conversation with Codex',
-      inputSchema: zodToJsonSchema(ContinueConversationSchema) as any
+      name: 'chat_msg',
+      description: 'Continue conversation',
+      inputSchema: zodToJsonSchema(ChatMsgSchema) as any
     },
     {
-      name: 'codex_chat_config',
-      description: 'Configure conversation context and options',
-      inputSchema: zodToJsonSchema(SetConversationOptionsSchema) as any
+      name: 'cancel',
+      description: 'Cancel/terminate session',
+      inputSchema: zodToJsonSchema(CancelSchema) as any
     },
     {
-      name: 'codex_chat_info',
-      description: 'Get conversation metadata and message history',
-      inputSchema: zodToJsonSchema(GetConversationMetadataSchema) as any
+      name: 'status',
+      description: 'Check session status',
+      inputSchema: zodToJsonSchema(StatusSchema) as any
     },
     {
-      name: 'codex_chat_summarize',
-      description: 'Summarize conversation to reduce context size',
-      inputSchema: zodToJsonSchema(SummarizeConversationSchema) as any
+      name: 'restart',
+      description: 'Restart session',
+      inputSchema: zodToJsonSchema(RestartSchema) as any
     },
     {
-      name: 'codex_cancel',
-      description: 'Cancel running Codex operations or force terminate sessions',
-      inputSchema: zodToJsonSchema(CancelRequestSchema) as any
+      name: 'plan',
+      description: 'Get/update implementation plan',
+      inputSchema: zodToJsonSchema(PlanSchema) as any
     },
     {
-      name: 'codex_status',
-      description: '💻 Check status and health of Codex sessions with diagnostics',
-      inputSchema: zodToJsonSchema(GetSessionHealthSchema) as any
-    },
-    {
-      name: 'codex_restart',
-      description: 'Restart Codex sessions to recover from errors',
-      inputSchema: zodToJsonSchema(RestartSessionSchema) as any
-    },
-    {
-      name: 'codex_plan_get',
-      description: '📋 Get current implementation plan from Codex session',
-      inputSchema: zodToJsonSchema(GetPlanSchema) as any
-    },
-    {
-      name: 'codex_plan_update',
-      description: 'Update or modify implementation plan with Codex',
-      inputSchema: zodToJsonSchema(UpdatePlanSchema) as any
-    },
-    {
-      name: 'codex_patch_preview',
-      description: 'Preview code changes that Codex plans to make',
-      inputSchema: zodToJsonSchema(PreviewPatchSchema) as any
-    },
-    {
-      name: 'codex_patch_apply',
-      description: 'Apply Codex-planned changes to files (requires confirmation)',
-      inputSchema: zodToJsonSchema(ApplyPatchSchema) as any
+      name: 'patch',
+      description: 'Preview/apply code changes',
+      inputSchema: zodToJsonSchema(PatchSchema) as any
     }
   ]
 }));
@@ -908,45 +735,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
 
     switch (name) {
-      case 'codex_ask':
-        return { content: [toContent(await handleConsultCodex(args, request.params._meta))] };
-      
-      case 'codex_chat_start':
-        return { content: [toContent(await handleStartConversation(args))] };
-      
-      case 'codex_chat_continue':
-        return { content: [toContent(await handleContinueConversation(args))] };
-      
-      case 'codex_chat_config':
-        return { content: [toContent(await handleSetConversationOptions(args))] };
-      
-      case 'codex_chat_info':
-        return { content: [toContent(await handleGetConversationMetadata(args))] };
-      
-      case 'codex_chat_summarize':
-        return { content: [toContent(await handleSummarizeConversation(args))] };
-      
-      case 'codex_cancel':
-        return { content: [toContent(await handleCancelRequest(args))] };
-      
-      case 'codex_status':
-        return { content: [toContent(await handleGetSessionHealth(args))] };
-      
-      case 'codex_restart':
-        return { content: [toContent(await handleRestartSession(args))] };
-      
-      case 'codex_plan_get':
-        return { content: [toContent(await handleGetPlan(args))] };
-      
-      case 'codex_plan_update':
-        return { content: [toContent(await handleUpdatePlan(args))] };
-      
-      case 'codex_patch_preview':
-        return { content: [toContent(await handlePreviewPatch(args))] };
-      
-      case 'codex_patch_apply':
-        return { content: [toContent(await handleApplyPatch(args))] };
-      
+      case 'ask':
+        return { content: [toContent(await handleAsk(args, request.params._meta))] };
+
+      case 'chat_start':
+        return { content: [toContent(await handleChatStart(args))] };
+
+      case 'chat_msg':
+        return { content: [toContent(await handleChatMsg(args))] };
+
+      case 'cancel':
+        return { content: [toContent(await handleCancel(args))] };
+
+      case 'status':
+        return { content: [toContent(await handleStatus(args))] };
+
+      case 'restart':
+        return { content: [toContent(await handleRestart(args))] };
+
+      case 'plan':
+        return { content: [toContent(await handlePlan(args))] };
+
+      case 'patch':
+        return { content: [toContent(await handlePatch(args))] };
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
