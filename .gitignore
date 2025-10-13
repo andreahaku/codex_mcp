@@ -105,3 +105,11 @@ data/
 
 # Test artifacts
 test-output/
+
+# Claude Code and AI tools
+.claude/
+.claudeignore
+.llm-memory/
+
+# Backup files
+*.backup
