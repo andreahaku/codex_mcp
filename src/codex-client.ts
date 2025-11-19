@@ -21,7 +21,6 @@ export class CodexClient {
     instructions?: string;
     model?: string;
     maxTokens?: number;
-    temperature?: number;
     stream?: boolean;
   }): Promise<CodexResponse> {
     try {

@@ -29,7 +29,6 @@ export interface ConsultParams {
   prompt: string;
   context?: string;
   model?: string;
-  temperature?: number;
 }
 
 export interface ConversationStartParams {

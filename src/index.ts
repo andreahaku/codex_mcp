@@ -62,7 +62,6 @@ const AskSchema = z.object({
   prompt: z.string().describe('Prompt text'),
   context: z.string().optional().describe('Additional context'),
   model: z.string().optional().describe('Model (e.g., "o3", "gpt-5")'),
-  temp: z.number().min(0).max(2).default(0.7).describe('Temperature'),
   page: z.number().int().min(1).default(1).describe('Page number (def: 1)'),
   max_tok: z.number().int().min(5000).max(20000).default(18000).describe('Max tokens/page (def: 18000)'),
   sid: z.string().optional().describe('Session ID (auto-gen if omitted)'),
@@ -245,9 +244,7 @@ async function handleAsk(args: any, meta?: any): Promise<any> {
         if (params.model) {
           commandArgs.push('--model', params.model);
         }
-        if (params.temp !== undefined && params.temp !== 0.7) {
-          commandArgs.push('--temperature', params.temp.toString());
-        }
+        // Note: Codex CLI does not support --temperature parameter
         commandArgs.push('--full-auto', '--skip-git-repo-check');
         commandArgs.push(input);
 

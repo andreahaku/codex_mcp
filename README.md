@@ -250,7 +250,6 @@ Complex prompts with special characters are automatically escaped for secure exe
 - `context` (string, optional): Additional context for the prompt
 - `streaming` (boolean, optional): Enable streaming responses
 - `model` (string, optional): Model to use (e.g., "o3", "gpt-5")
-- `temperature` (number, optional): Sampling temperature (0.0-2.0)
 - `page` (number, optional): Page number for pagination
 - `max_tokens_per_page` (number, optional): Maximum tokens per page
 
