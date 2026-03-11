@@ -22,7 +22,7 @@ Options:
   --name <alias>        Save or update a friendly alias for the resolved session
   --prompt <text>       Prompt text (alternative to positional arguments or stdin)
   --list-sessions       Show the saved aliases and last session for the current workspace
-  --fast                Use lightweight model (gpt-4o-mini) with low reasoning for quick tasks
+  --fast                Use lightweight model (gpt-5.1-codex-mini) with low reasoning for quick tasks
   --deep                Use full model (gpt-5.4) with max reasoning for complex analysis
   --reasoning <level>   Set reasoning effort: minimal, low, medium, high, xhigh
   --structured          Request JSON-structured output for cross-model chaining
@@ -57,7 +57,15 @@ state_root_default="${CODEX_HOME:-$HOME/.codex}/memories/codex-skill"
 state_dir="${CODEX_SKILL_STATE_DIR:-$state_root_default}"
 mkdir -p "${state_dir}"
 
-workspace_key="$(printf '%s' "${workspace_path}" | shasum -a 256 | awk '{print $1}')"
+# Use shasum (macOS) or sha256sum (Linux) for hashing
+if command -v shasum >/dev/null 2>&1; then
+  workspace_key="$(printf '%s' "${workspace_path}" | shasum -a 256 | awk '{print $1}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+  workspace_key="$(printf '%s' "${workspace_path}" | sha256sum | awk '{print $1}')"
+else
+  # Fallback: use a simple hash via python3
+  workspace_key="$(printf '%s' "${workspace_path}" | python3 -c "import sys,hashlib;print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())")"
+fi
 last_file="${state_dir}/${workspace_key}.last"
 aliases_file="${state_dir}/${workspace_key}.aliases"
 
@@ -187,7 +195,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --fast)
-      model_override="gpt-4o-mini"
+      model_override="gpt-5.1-codex-mini"
       reasoning="low"
       shift
       ;;
@@ -407,18 +415,24 @@ if [[ "${mode}" != "one-shot" && -n "${final_session_id}" ]]; then
   fi
 fi
 
-echo "[codex-session] mode=${mode}"
-echo "[codex-session] workspace=${workspace_path}"
+# In structured mode, send session preamble to stderr to keep stdout as clean JSON
+preamble_fd=1
+if [[ "${structured}" -eq 1 ]]; then
+  preamble_fd=2
+fi
+
+echo "[codex-session] mode=${mode}" >&"${preamble_fd}"
+echo "[codex-session] workspace=${workspace_path}" >&"${preamble_fd}"
 if [[ -n "${final_session_id}" ]]; then
-  echo "[codex-session] session_id=${final_session_id}"
+  echo "[codex-session] session_id=${final_session_id}" >&"${preamble_fd}"
 fi
 if [[ -n "${alias_name}" ]]; then
-  echo "[codex-session] alias=${alias_name}"
+  echo "[codex-session] alias=${alias_name}" >&"${preamble_fd}"
 fi
 if [[ -n "${reasoning}" ]]; then
-  echo "[codex-session] reasoning=${reasoning}"
+  echo "[codex-session] reasoning=${reasoning}" >&"${preamble_fd}"
 fi
-echo
+echo >&"${preamble_fd}"
 
 if [[ -s "${message_file}" ]]; then
   cat "${message_file}"

@@ -12,7 +12,7 @@ Defaults:
   If no target is provided, the script uses --uncommitted.
 
 Options:
-  --fast                Use lightweight model (gpt-4o-mini) with low reasoning for quick reviews
+  --fast                Use lightweight model (gpt-5.1-codex-mini) with low reasoning for quick reviews
   --deep                Use full model (gpt-5.4) with max reasoning for thorough reviews
   --reasoning <level>   Set reasoning effort: minimal, low, medium, high, xhigh
 
@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --fast)
-      model_override="gpt-4o-mini"
+      model_override="gpt-5.1-codex-mini"
       reasoning="low"
       shift
       ;;

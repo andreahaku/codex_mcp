@@ -83,7 +83,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --commit <sha>
 
 Choose the depth level based on task complexity:
 
-- `--fast`: Uses `gpt-4o-mini` with low reasoning. Best for quick lookups, simple code questions, syntax checks. Fast and lightweight.
+- `--fast`: Uses `gpt-5.1-codex-mini` with low reasoning. Best for quick lookups, simple code questions, syntax checks. Fast and lightweight.
 - *(default)*: Uses `gpt-5.4` with standard reasoning. Good for most tasks.
 - `--deep`: Uses `gpt-5.4` with `xhigh` reasoning effort. Best for complex architecture analysis, subtle bug hunting, security audits.
 - `--reasoning <level>`: Fine-grained control — `minimal`, `low`, `medium`, `high`, `xhigh`.

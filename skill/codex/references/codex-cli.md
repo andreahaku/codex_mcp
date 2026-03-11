@@ -24,7 +24,7 @@ Behavior:
 
 Depth and reasoning flags:
 
-- `--fast` uses `gpt-4o-mini` with `low` reasoning — fast, lightweight
+- `--fast` uses `gpt-5.1-codex-mini` with `low` reasoning — fast, lightweight
 - `--deep` uses `gpt-5.4` with `xhigh` reasoning — max analysis depth
 - `--reasoning <level>` sets explicit reasoning effort (`minimal`, `low`, `medium`, `high`, `xhigh`)
 - `--structured` wraps the prompt to request JSON-structured output
