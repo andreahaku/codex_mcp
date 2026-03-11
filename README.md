@@ -16,6 +16,21 @@ This server is converted from the original GPT-5 MCP server, with cost tracking 
 - **🆕 Enhanced Capability Detection**: Dynamic discovery of Codex CLI features
 - **🆕 Improved Claude Code Integration**: Optimized for collaborative workflows
 
+## Local Codex Skill
+
+This repository also includes a local Claude skill at [skill/codex](skill/codex) for cases where you want Claude to use the installed `codex` CLI directly instead of going through the MCP server.
+
+The skill is designed for iterative collaboration, not just one-shot prompts:
+
+- New persistent session: `bash skill/codex/scripts/codex-ask.sh --new --name api-design "Analyze this architecture"`
+- Resume the last session in the current workspace: `bash skill/codex/scripts/codex-ask.sh --last "Continue from the previous plan"`
+- Resume a specific session by alias or id: `bash skill/codex/scripts/codex-ask.sh --session api-design "Refine the migration strategy"`
+- One-shot prompt: `bash skill/codex/scripts/codex-ask.sh --one-shot "Summarize the tradeoffs briefly"`
+
+The wrapper prints a `[codex-session]` preamble with the workspace and resolved `session_id`, and stores per-workspace aliases plus the last-used session so Claude can continue the same Codex thread across turns.
+
+Use the local skill when you want Codex to behave like a persistent collaborator for iterative design, debugging, code refinement, and back-and-forth analysis. Use the MCP server when you want Codex exposed as Claude tools with managed sessions, health checks, restart, and cancellation.
+
 ## Available Tools
 
 ### Core Tools
