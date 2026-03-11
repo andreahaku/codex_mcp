@@ -29,8 +29,8 @@ shift || true
 # Sanitize thread names: enforce alphanumeric whitelist to prevent directory traversal and injection
 sanitize_thread_name() {
   local name="$1"
-  if [[ ! "${name}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "Error: Thread name must contain only letters, numbers, hyphens, and underscores (e.g., 'feature-auth')." >&2
+  if [[ ! "${name}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: Thread name must contain only letters, numbers, dots, hyphens, and underscores (e.g., 'feature-auth', 'release-1.2')." >&2
     exit 2
   fi
 }
