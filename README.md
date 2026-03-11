@@ -29,7 +29,31 @@ The skill is designed for iterative collaboration, not just one-shot prompts:
 
 The wrapper prints a `[codex-session]` preamble with the workspace and resolved `session_id`, and stores per-workspace aliases plus the last-used session so Claude can continue the same Codex thread across turns.
 
-Use the local skill when you want Codex to behave like a persistent collaborator for iterative design, debugging, code refinement, and back-and-forth analysis. Use the MCP server when you want Codex exposed as Claude tools with managed sessions, health checks, restart, and cancellation.
+### Depth Control
+
+Adjust model and reasoning effort based on task complexity:
+
+- `--fast`: Uses `gpt-5.1-codex-mini` with low reasoning for quick lookups
+- *(default)*: Uses `gpt-5.4` with standard reasoning
+- `--deep`: Uses `gpt-5.4` with `xhigh` reasoning for complex analysis
+- `--reasoning <level>`: Fine-grained control (`minimal`, `low`, `medium`, `high`, `xhigh`)
+
+### Structured Output
+
+Use `--structured` to get JSON output (`{ findings[], summary, model }`) for machine-readable results and cross-model chaining.
+
+### Multi-Agent Collaboration
+
+The skill includes scripts for multi-agent workflows with Gemini:
+
+- **Cross-model reviews**: Run Codex and Gemini reviews in parallel to find complementary blind spots
+- **Debate mode**: Automated critique cycles (`debate.sh`) — Model A responds, Model B critiques, Model A revises
+- **Session tracking**: Shared cross-model threads (`cross-model-tracker.sh`) linking Codex and Gemini sessions under a unified thread ID
+- **Routing guide**: Built-in guidance for delegating tasks to the best model based on task type
+
+### When to Use What
+
+Use the **local skill** when you want Codex to behave like a persistent collaborator for iterative design, debugging, code refinement, back-and-forth analysis, and multi-agent orchestration with Gemini. Use the **MCP server** when you want Codex exposed as Claude tools with managed sessions, health checks, restart, and cancellation.
 
 ## Available Tools
 
@@ -234,7 +258,7 @@ All errors are automatically categorized and logged with context:
 ### **Dynamic Capability Detection**
 The server automatically detects available Codex CLI features:
 - JSON mode support
-- Available models (GPT-5, o3, etc.)
+- Available models (GPT-5.4, GPT-5.1-codex-mini, etc.)
 - Workspace/directory mode
 - File operation capabilities
 - Plan API support
@@ -324,11 +348,22 @@ src/
 ├── index.ts                   # Main MCP server
 ├── codex-process-simple.ts    # Enhanced Codex CLI wrapper with capability detection
 ├── session-manager.ts         # Session management with workspace isolation
-├── conversation.ts            # Conversation management  
+├── conversation.ts            # Conversation management
 ├── logger.ts                  # Structured logging system
 ├── error-types.ts             # Error categorization and definitions
 ├── error-utils.ts             # Error mapping and recovery utilities
+├── token-utils.ts             # Pagination and token estimation
 └── types.ts                   # TypeScript types
+
+skill/codex/
+├── SKILL.md                   # Claude Code skill instructions
+├── references/
+│   └── codex-cli.md           # Wrapper documentation and environment variables
+└── scripts/
+    ├── codex-ask.sh           # Main consultation wrapper (sessions, one-shot, depth control)
+    ├── codex-review.sh        # Code review wrapper (uncommitted, branch, commit)
+    ├── cross-model-tracker.sh # Cross-model session tracking
+    └── debate.sh              # Automated cross-model debate/critique
 ```
 
 ### Building

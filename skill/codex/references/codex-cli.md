@@ -71,7 +71,9 @@ Behavior:
 
 - Runs `codex review`
 - Defaults to `--uncommitted` when no explicit target is provided
-- Appends the optional prompt as Codex review instructions
+- When `--base` or `--commit` is set, custom prompts are routed through `-c developer_instructions="..."` (because Codex CLI does not allow positional `[PROMPT]` with those flags)
+- Escapes backslashes, double quotes, carriage returns, and newlines in the prompt to prevent TOML config breakage
+- Otherwise appends the optional prompt as a positional argument
 
 ## Cross-model tracker
 

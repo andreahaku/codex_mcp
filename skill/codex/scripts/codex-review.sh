@@ -137,6 +137,7 @@ if [[ -n "${custom_prompt}" ]]; then
     # so pass custom instructions via developer_instructions config
     escaped_prompt="${custom_prompt//\\/\\\\}"
     escaped_prompt="${escaped_prompt//\"/\\\"}"
+    escaped_prompt="${escaped_prompt//$'\r'/}"
     escaped_prompt="${escaped_prompt//$'\n'/\\n}"
     args=(-c "developer_instructions=\"${escaped_prompt}\"" "${args[@]}")
   else

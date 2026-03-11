@@ -26,7 +26,7 @@ mkdir -p "${state_dir}"
 cmd="${1:-}"
 shift || true
 
-# Sanitize thread names: reject path separators to prevent directory traversal
+# Sanitize thread names: enforce alphanumeric whitelist to prevent directory traversal and injection
 sanitize_thread_name() {
   local name="$1"
   if [[ ! "${name}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
