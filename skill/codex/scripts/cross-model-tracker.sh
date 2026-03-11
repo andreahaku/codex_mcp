@@ -26,9 +26,19 @@ mkdir -p "${state_dir}"
 cmd="${1:-}"
 shift || true
 
+# Sanitize thread names: reject path separators to prevent directory traversal
+sanitize_thread_name() {
+  local name="$1"
+  if [[ "${name}" == *"/"* || "${name}" == *".."* ]]; then
+    echo "Error: Thread name cannot contain '/' or '..'. Use hyphens instead (e.g., 'feature-auth')." >&2
+    exit 2
+  fi
+}
+
 case "${cmd}" in
   new)
     thread_name="${1:?Thread name required}"
+    sanitize_thread_name "${thread_name}"
     thread_file="${state_dir}/${thread_name}.json"
     if [[ -f "${thread_file}" ]]; then
       echo "Thread '${thread_name}' already exists." >&2
@@ -38,7 +48,7 @@ case "${cmd}" in
 import json, sys, datetime
 data = {
     'name': sys.argv[1],
-    'created_at': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'created_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     'sessions': {},
     'turns': []
 }
@@ -50,6 +60,7 @@ with open(sys.argv[2], 'w') as f:
 
   link)
     thread_name="${1:?Thread name required}"
+    sanitize_thread_name "${thread_name}"
     model="${2:?Model required (codex or gemini)}"
     session_ref="${3:?Session reference required}"
     thread_file="${state_dir}/${thread_name}.json"
@@ -75,6 +86,7 @@ with open(thread_file, 'w') as f:
 
   get)
     thread_name="${1:?Thread name required}"
+    sanitize_thread_name "${thread_name}"
     thread_file="${state_dir}/${thread_name}.json"
     if [[ ! -f "${thread_file}" ]]; then
       echo "Thread '${thread_name}' not found." >&2
@@ -85,6 +97,7 @@ with open(thread_file, 'w') as f:
 
   log)
     thread_name="${1:?Thread name required}"
+    sanitize_thread_name "${thread_name}"
     model="${2:?Model required (codex or gemini)}"
     summary="${3:?Summary required}"
     thread_file="${state_dir}/${thread_name}.json"
@@ -102,7 +115,7 @@ with open(thread_file, 'r') as f:
     data = json.load(f)
 data['turns'].append({
     'model': model,
-    'timestamp': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'timestamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     'summary': summary
 })
 with open(thread_file, 'w') as f:
@@ -134,6 +147,7 @@ print(f'{name}  created={created}  sessions=[{sessions}]  turns={turns}')
 
   export)
     thread_name="${1:?Thread name required}"
+    sanitize_thread_name "${thread_name}"
     thread_file="${state_dir}/${thread_name}.json"
     if [[ ! -f "${thread_file}" ]]; then
       echo "Thread '${thread_name}' not found." >&2

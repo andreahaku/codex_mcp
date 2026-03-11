@@ -39,7 +39,7 @@ if [[ -z "${gemini_skill_dir}" ]]; then
   for candidate in \
     "${HOME}/.claude/skills/gemini" \
     "${HOME}/Development/Claude/gemini_mcp/skill/gemini" \
-    "$(dirname "$(dirname "${codex_skill_dir}")")/gemini_mcp/skill/gemini"; do
+    "$(dirname "$(dirname "$(dirname "${codex_skill_dir}")")")/gemini_mcp/skill/gemini"; do
     if [[ -f "${candidate}/scripts/gemini-ask.sh" ]]; then
       gemini_skill_dir="${candidate}"
       break
@@ -253,13 +253,15 @@ ${critique}
 Address the points and provide your final refined analysis." "${round_file}"
 
   echo "  Saved to: ${round_file}"
-  prev_response="$(cat "${round_file}")"
+  latest_response="$(cat "${round_file}")"
   round_num=$((round_num + 1))
 
-  # Swap models for next round
+  # Swap models for next round: the responder becomes the one to be critiqued
   tmp="${current_model}"
   current_model="${prev_model}"
   prev_model="${tmp}"
+  # prev_response must track the new prev_model's latest output
+  prev_response="${latest_response}"
 done
 
 # Generate synthesis summary
