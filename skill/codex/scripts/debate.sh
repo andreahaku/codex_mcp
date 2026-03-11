@@ -253,15 +253,11 @@ ${critique}
 Address the points and provide your final refined analysis." "${round_file}"
 
   echo "  Saved to: ${round_file}"
-  latest_response="$(cat "${round_file}")"
+  prev_response="$(cat "${round_file}")"
   round_num=$((round_num + 1))
 
-  # Swap models for next round: the responder becomes the one to be critiqued
-  tmp="${current_model}"
-  current_model="${prev_model}"
-  prev_model="${tmp}"
-  # prev_response must track the new prev_model's latest output
-  prev_response="${latest_response}"
+  # Roles stay fixed: prev_model always proposes/revises, current_model always critiques.
+  # No swap needed — alternating would cause a model to critique its own output.
 done
 
 # Generate synthesis summary

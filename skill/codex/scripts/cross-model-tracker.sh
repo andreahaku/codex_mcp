@@ -29,8 +29,8 @@ shift || true
 # Sanitize thread names: reject path separators to prevent directory traversal
 sanitize_thread_name() {
   local name="$1"
-  if [[ "${name}" == *"/"* || "${name}" == *".."* ]]; then
-    echo "Error: Thread name cannot contain '/' or '..'. Use hyphens instead (e.g., 'feature-auth')." >&2
+  if [[ ! "${name}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: Thread name must contain only letters, numbers, hyphens, and underscores (e.g., 'feature-auth')." >&2
     exit 2
   fi
 }
