@@ -16,7 +16,7 @@ argument-hint: "<prompt or review request>"
 
 # Codex
 
-Use the local `codex` CLI directly. Do not use this repository's MCP server when this skill is active.
+Use the local `codex` CLI directly (GPT-5.4 default). Do not use this repository's MCP server when this skill is active.
 
 ## Context
 
@@ -79,6 +79,36 @@ bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --commit <sha>
 7. After using `codex-ask.sh`, read the `[codex-session] ...` preamble in the wrapper output. Preserve the session id or alias in your reply so the user can continue the same Codex thread later.
 8. Summarize Codex's result clearly and attribute it to Codex. Preserve concrete findings, file paths, line references, and notable tradeoffs when present.
 
+## Depth Control
+
+Choose the depth level based on task complexity:
+
+- `--fast`: Uses `gpt-4o-mini` with low reasoning. Best for quick lookups, simple code questions, syntax checks. Fast and lightweight.
+- *(default)*: Uses `gpt-5.4` with standard reasoning. Good for most tasks.
+- `--deep`: Uses `gpt-5.4` with `xhigh` reasoning effort. Best for complex architecture analysis, subtle bug hunting, security audits.
+- `--reasoning <level>`: Fine-grained control — `minimal`, `low`, `medium`, `high`, `xhigh`.
+
+```bash
+# Quick question
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot --fast "What does this regex do: /^(?=.*[A-Z])/"
+
+# Deep analysis
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot --deep "Analyze this state machine for race conditions: $(cat src/ble/coordinator.ts)"
+
+# Review with max reasoning
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --deep --uncommitted
+```
+
+## Structured Output
+
+Use `--structured` to get JSON output for machine-readable results. This is essential for cross-model chaining — when output from Codex will be compared with or fed to Gemini.
+
+```bash
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot --structured "Review this function for bugs: $(cat src/utils.ts)"
+```
+
+Output schema: `{ findings[], summary, model }` — each finding has `id`, `severity`, `category`, `file`, `line`, `title`, `detail`, `recommendation`, `confidence`.
+
 ## Session Strategy
 
 - Prefer `--new --name <task-slug>` when starting a substantial task. Choose short, stable aliases such as `auth-refactor`, `api-design`, or `react-perf`.
@@ -93,6 +123,21 @@ bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --commit <sha>
 - If the user clearly refers to a specific commit, use `--commit`.
 - If the user clearly refers to branch or PR changes against a base branch, use `--base`.
 - If the review target is ambiguous and the wrong target would be misleading, ask one short clarifying question.
+
+## Multi-Agent Routing Guide
+
+Use this guide when deciding whether to delegate a task to Codex, Gemini, or both:
+
+| Task Type | Best Model | Depth | Why |
+|-----------|-----------|-------|-----|
+| Logic/algorithm bugs | **Codex** | --deep | Strong state machine reasoning, finds race conditions |
+| Code review (general) | **Both** in parallel | default | Different blind spots — merge findings |
+| Architecture design | **Codex** first, Gemini validates | --deep | Good at structure, Gemini adds platform considerations |
+| Security audit | **Both** in parallel | --deep | Complementary: Codex finds logic flaws, Gemini finds integration risks |
+| Platform-specific (iOS/Android/BLE) | **Gemini** first | --deep | Better at platform quirks and real-world edge cases |
+| Quick syntax/API question | **Codex** | --fast | Fastest response for simple lookups |
+| Large context analysis | **Gemini** first | default | Larger context window handles big files better |
+| Refactoring suggestions | **Codex** | default | Good structural sense for code organization |
 
 ## Multi-Agent Collaboration
 
@@ -118,6 +163,37 @@ bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --session <task-slug> "<follow-u
 ```
 
 Use `--session <alias>` instead of `--last` for multi-agent follow-ups — other Codex sessions may have been started between turns, making `--last` unreliable. Codex maintains its own conversation history within the session, so follow-ups only need the new information or Claude's synthesis.
+
+### Cross-Model Session Tracking
+For tasks involving both Codex and Gemini, use the shared tracker to link sessions:
+
+```bash
+# Create a shared thread
+bash "${CLAUDE_SKILL_DIR}/scripts/cross-model-tracker.sh" new "auth-redesign"
+
+# Link Codex session
+bash "${CLAUDE_SKILL_DIR}/scripts/cross-model-tracker.sh" link "auth-redesign" codex "<session-id>"
+
+# Log a turn summary after each model interaction
+bash "${CLAUDE_SKILL_DIR}/scripts/cross-model-tracker.sh" log "auth-redesign" codex "Proposed event-driven auth with JWT rotation"
+
+# Export context for injection into the next model's prompt
+context=$(bash "${CLAUDE_SKILL_DIR}/scripts/cross-model-tracker.sh" export "auth-redesign")
+```
+
+### Debate Mode
+For thorough analysis with automatic cross-model critique:
+
+```bash
+bash "${CLAUDE_SKILL_DIR}/scripts/debate.sh" \
+  --topic "Should we use WebSockets or SSE for real-time BLE data streaming?" \
+  --first codex \
+  --rounds 1 \
+  --deep \
+  --output-dir /tmp/debate-ble-streaming
+```
+
+The debate script automates: Model A responds → Model B critiques → Model A addresses critique. Multiple rounds are supported. After the debate, read all round files and synthesize: consensus points, divergences, unique insights, and corrected errors.
 
 ### Providing Context to Codex
 Codex cannot see Claude's conversation. When delegating, always embed the relevant context directly in the prompt:

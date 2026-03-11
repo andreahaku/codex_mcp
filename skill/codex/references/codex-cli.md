@@ -22,13 +22,21 @@ Behavior:
 - Emits a `[codex-session]` preamble with workspace and session metadata before the final Codex response
 - Stores per-workspace aliases and last-session pointers in a local state directory
 
+Depth and reasoning flags:
+
+- `--fast` uses `gpt-4o-mini` with `low` reasoning — fast, lightweight
+- `--deep` uses `gpt-5.4` with `xhigh` reasoning — max analysis depth
+- `--reasoning <level>` sets explicit reasoning effort (`minimal`, `low`, `medium`, `high`, `xhigh`)
+- `--structured` wraps the prompt to request JSON-structured output
+
 Optional environment variables:
 
-- `CODEX_SKILL_MODEL`
-- `CODEX_SKILL_SANDBOX`
-- `CODEX_SKILL_APPROVAL`
-- `CODEX_SKILL_SEARCH=1`
-- `CODEX_SKILL_STATE_DIR`
+- `CODEX_SKILL_MODEL` — model override
+- `CODEX_SKILL_SANDBOX` — sandbox mode override
+- `CODEX_SKILL_APPROVAL` — approval policy override
+- `CODEX_SKILL_SEARCH=1` — enable web search
+- `CODEX_SKILL_STATE_DIR` — session state directory override
+- `CODEX_SKILL_REASONING` — default reasoning effort
 
 Examples:
 
@@ -36,7 +44,8 @@ Examples:
 bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --new --name api-design "Review this service boundary and suggest improvements."
 bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --last "Push further on the migration strategy."
 bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --session api-design "Now propose a rollout plan."
-bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot "Summarize the tradeoffs of feature flags vs branch-by-abstraction."
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot --fast "Summarize this regex pattern."
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot --deep --structured "Analyze this module for race conditions."
 ```
 
 ## Review wrapper
@@ -54,9 +63,51 @@ Supported options:
 - `--commit <sha>`
 - `--title <title>`
 - `--prompt <text>`
+- `--fast` — lightweight model with low reasoning
+- `--deep` — full model with max reasoning
+- `--reasoning <level>` — explicit reasoning effort
 
 Behavior:
 
 - Runs `codex review`
 - Defaults to `--uncommitted` when no explicit target is provided
 - Appends the optional prompt as Codex review instructions
+
+## Cross-model tracker
+
+Path:
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/cross-model-tracker.sh
+```
+
+Manages shared threads across Codex and Gemini. Commands:
+
+- `new <name>` — create a new cross-model thread
+- `link <name> <model> <session-ref>` — link a model session to a thread
+- `log <name> <model> <summary>` — append a turn summary
+- `get <name>` — show thread state (JSON)
+- `list` — list all active threads
+- `export <name>` — export context summary for prompt injection
+
+State is stored in `~/.claude/cross-model-threads/`.
+
+## Debate script
+
+Path:
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/debate.sh
+```
+
+Automates structured cross-model critique cycles. Options:
+
+- `--topic <text>` — the question to debate (required)
+- `--first <model>` — which model goes first: `codex` or `gemini` (default: codex)
+- `--rounds <n>` — number of critique rounds (default: 1)
+- `--context <text>` — additional context for all prompts
+- `--structured` — use JSON output
+- `--fast` / `--deep` — depth control
+- `--output-dir <dir>` — save round outputs
+
+Requires `GEMINI_SKILL_DIR` environment variable to locate the Gemini skill.

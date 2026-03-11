@@ -22,13 +22,18 @@ Options:
   --name <alias>        Save or update a friendly alias for the resolved session
   --prompt <text>       Prompt text (alternative to positional arguments or stdin)
   --list-sessions       Show the saved aliases and last session for the current workspace
+  --fast                Use lightweight model (gpt-4o-mini) with low reasoning for quick tasks
+  --deep                Use full model (gpt-5.4) with max reasoning for complex analysis
+  --reasoning <level>   Set reasoning effort: minimal, low, medium, high, xhigh
+  --structured          Request JSON-structured output for cross-model chaining
 
 Environment:
-  CODEX_SKILL_MODEL       Optional model override
+  CODEX_SKILL_MODEL       Optional model override (default: gpt-5.4)
   CODEX_SKILL_SANDBOX     Optional sandbox mode override
   CODEX_SKILL_APPROVAL    Optional approval policy override
   CODEX_SKILL_SEARCH=1    Enable web search for Codex
   CODEX_SKILL_STATE_DIR   Override the session state directory
+  CODEX_SKILL_REASONING   Default reasoning effort
 EOF
 }
 
@@ -62,6 +67,9 @@ prompt=""
 session_ref=""
 alias_name=""
 list_sessions=0
+reasoning="${CODEX_SKILL_REASONING:-}"
+model_override=""
+structured=0
 
 set_mode() {
   local next_mode="$1"
@@ -178,6 +186,28 @@ while [[ $# -gt 0 ]]; do
       list_sessions=1
       shift
       ;;
+    --fast)
+      model_override="gpt-4o-mini"
+      reasoning="low"
+      shift
+      ;;
+    --deep)
+      model_override="gpt-5.4"
+      reasoning="xhigh"
+      shift
+      ;;
+    --reasoning)
+      if [[ $# -lt 2 ]]; then
+        echo "--reasoning requires a value (minimal, low, medium, high, xhigh)" >&2
+        exit 2
+      fi
+      reasoning="$2"
+      shift 2
+      ;;
+    --structured)
+      structured=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -212,6 +242,33 @@ if [[ "${mode}" == "one-shot" && -n "${alias_name}" ]]; then
   exit 2
 fi
 
+# Wrap prompt for structured output if requested
+if [[ "${structured}" -eq 1 ]]; then
+  prompt="You MUST respond with valid JSON only. Use this exact schema:
+{
+  \"findings\": [
+    {
+      \"id\": \"<short-id>\",
+      \"severity\": \"high|medium|low|info\",
+      \"category\": \"bug|security|performance|architecture|style|missing\",
+      \"file\": \"<file path or null>\",
+      \"line\": <line number or null>,
+      \"title\": \"<one-line summary>\",
+      \"detail\": \"<explanation>\",
+      \"recommendation\": \"<suggested fix or action>\",
+      \"confidence\": \"high|medium|low\"
+    }
+  ],
+  \"summary\": \"<2-3 sentence overview>\",
+  \"model\": \"codex\"
+}
+
+Do not include any text outside the JSON block.
+
+Task:
+${prompt}"
+fi
+
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-skill.XXXXXX")"
 events_file="${tmp_dir}/events.jsonl"
 stderr_file="${tmp_dir}/stderr.log"
@@ -224,7 +281,10 @@ cmd=(
   -c 'approval_policy="on-request"'
 )
 
-if [[ -n "${CODEX_SKILL_MODEL:-}" ]]; then
+# Model: CLI flag > env var > default (codex default is gpt-5.4)
+if [[ -n "${model_override}" ]]; then
+  cmd+=(-c "model=\"${model_override}\"")
+elif [[ -n "${CODEX_SKILL_MODEL:-}" ]]; then
   cmd+=(-c "model=\"${CODEX_SKILL_MODEL}\"")
 fi
 
@@ -234,6 +294,10 @@ fi
 
 if [[ -n "${CODEX_SKILL_APPROVAL:-}" ]]; then
   cmd+=(-c "approval_policy=\"${CODEX_SKILL_APPROVAL}\"")
+fi
+
+if [[ -n "${reasoning}" ]]; then
+  cmd+=(-c "model_reasoning_effort=\"${reasoning}\"")
 fi
 
 if [[ "${CODEX_SKILL_SEARCH:-0}" == "1" ]]; then
@@ -350,6 +414,9 @@ if [[ -n "${final_session_id}" ]]; then
 fi
 if [[ -n "${alias_name}" ]]; then
   echo "[codex-session] alias=${alias_name}"
+fi
+if [[ -n "${reasoning}" ]]; then
+  echo "[codex-session] reasoning=${reasoning}"
 fi
 echo
 
