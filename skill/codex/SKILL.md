@@ -3,9 +3,15 @@ name: codex
 description: >
   Use the local Codex CLI when the user explicitly asks to consult Codex, delegate a task to Codex,
   run /codex, continue or resume a Codex conversation, or request a Codex review of local changes,
-  a branch, a commit, or a PR. Prefer persistent multi-turn Codex sessions for iterative coding,
-  architecture analysis, refinement, and back-and-forth collaboration. This skill is independent
-  from any MCP server and talks directly to the installed `codex` CLI.
+  a branch, a commit, or a PR. Also use this skill when Claude decides that Codex's strengths
+  (OpenAI reasoning models, alternative code generation perspective) would complement its own
+  analysis — for instance to get a second opinion on an implementation, cross-validate a complex
+  algorithm, or iterate on a design with a different model's perspective. Prefer persistent
+  multi-turn Codex sessions for iterative coding, architecture analysis, refinement, and
+  back-and-forth collaboration. This skill is independent from any MCP server and talks directly
+  to the installed `codex` CLI.
+user-invocable: true
+argument-hint: "<prompt or review request>"
 ---
 
 # Codex
@@ -87,6 +93,44 @@ bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --commit <sha>
 - If the user clearly refers to a specific commit, use `--commit`.
 - If the user clearly refers to branch or PR changes against a base branch, use `--base`.
 - If the review target is ambiguous and the wrong target would be misleading, ask one short clarifying question.
+
+## Multi-Agent Collaboration
+
+When Claude delegates work to Codex as part of a broader multi-model workflow:
+
+### One-Shot Consultation
+For a focused question where Claude needs Codex's perspective once:
+
+```bash
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot "<specific question with full context>"
+```
+
+Include all necessary context in the prompt — Codex does not share Claude's conversation history.
+
+### Persistent Cross-Model Thread
+When Claude needs to iterate with Codex over multiple turns (e.g., refining an architecture):
+
+```bash
+# First turn — always name the session for stable reference
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --new --name <task-slug> "<initial question with context>"
+# Follow-up turns — use the alias, not --last, to avoid resuming the wrong session
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --session <task-slug> "<follow-up incorporating Claude's own analysis>"
+```
+
+Use `--session <alias>` instead of `--last` for multi-agent follow-ups — other Codex sessions may have been started between turns, making `--last` unreliable. Codex maintains its own conversation history within the session, so follow-ups only need the new information or Claude's synthesis.
+
+### Providing Context to Codex
+Codex cannot see Claude's conversation. When delegating, always embed the relevant context directly in the prompt:
+- For code analysis: include the file contents or a diff inline.
+- For architecture questions: summarize the current design and constraints.
+- For follow-ups on a previous Codex session: use `--last` or `--session` so Codex has its own prior context.
+
+### Interpreting Results
+After receiving Codex's response:
+1. Summarize the key findings and attribute them to Codex.
+2. Preserve concrete details: file paths, line references, specific recommendations.
+3. If Codex's analysis conflicts with Claude's own, present both perspectives and let the user decide.
+4. If Codex's output will be forwarded to another model (e.g., Gemini), extract the actionable parts cleanly.
 
 ## Notes
 
