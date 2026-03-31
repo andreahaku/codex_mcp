@@ -208,6 +208,20 @@ After receiving Codex's response:
 3. If Codex's analysis conflicts with Claude's own, present both perspectives and let the user decide.
 4. If Codex's output will be forwarded to another model (e.g., Gemini), extract the actionable parts cleanly.
 
+## Worker Mode (for /coordinate and multi-agent orchestration)
+
+When invoked as a worker by a coordinator skill, use `--worker --scratchpad <dir>`:
+
+```bash
+bash "/Users/administrator/.claude/skills/codex/scripts/codex-ask.sh" --worker --scratchpad /tmp/robottino-scratchpad/session-123 --deep "Analyze the auth module for security issues"
+```
+
+Worker mode behavior:
+- Output is written to `{scratchpad}/workers/codex.md` (with frontmatter metadata) and `codex.json` (raw)
+- `--structured` is forced on automatically (JSON findings schema)
+- No interactive output — all goes to scratchpad files
+- The coordinator reads the scratchpad to synthesize findings across workers
+
 ## Notes
 
 - The wrappers live inside this skill, so the skill remains portable and independent from `codex_mcp`.

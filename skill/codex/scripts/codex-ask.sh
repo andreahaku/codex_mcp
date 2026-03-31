@@ -26,6 +26,8 @@ Options:
   --deep                Use full model (gpt-5.4) with max reasoning for complex analysis
   --reasoning <level>   Set reasoning effort: minimal, low, medium, high, xhigh
   --structured          Request JSON-structured output for cross-model chaining
+  --worker              Worker mode: write output to scratchpad, structured by default
+  --scratchpad <dir>    Scratchpad directory for worker mode output
 
 Environment:
   CODEX_SKILL_MODEL       Optional model override (default: gpt-5.4)
@@ -78,6 +80,8 @@ list_sessions=0
 reasoning="${CODEX_SKILL_REASONING:-}"
 model_override=""
 structured=0
+worker_mode=0
+scratchpad_dir=""
 
 set_mode() {
   local next_mode="$1"
@@ -215,6 +219,19 @@ while [[ $# -gt 0 ]]; do
     --structured)
       structured=1
       shift
+      ;;
+    --worker)
+      worker_mode=1
+      structured=1
+      shift
+      ;;
+    --scratchpad)
+      if [[ $# -lt 2 ]]; then
+        echo "--scratchpad requires a directory path" >&2
+        exit 2
+      fi
+      scratchpad_dir="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -435,7 +452,32 @@ fi
 echo >&"${preamble_fd}"
 
 if [[ -s "${message_file}" ]]; then
-  cat "${message_file}"
+  if [[ "${worker_mode}" -eq 1 && -n "${scratchpad_dir}" ]]; then
+    # Worker mode: write output to scratchpad instead of stdout
+    mkdir -p "${scratchpad_dir}/workers"
+    local_status="completed"
+    if [[ "${status}" -ne 0 ]]; then
+      local_status="failed"
+    fi
+    {
+      echo "---"
+      echo "worker: codex"
+      echo "task: research"
+      echo "status: ${local_status}"
+      echo "started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      echo "completed: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      echo "model: ${model_override:-gpt-5.4}"
+      echo "session_id: ${final_session_id:-unknown}"
+      echo "---"
+      echo ""
+      cat "${message_file}"
+    } > "${scratchpad_dir}/workers/codex.md"
+    # Also write raw output for JSON parsing
+    cp "${message_file}" "${scratchpad_dir}/workers/codex.json" 2>/dev/null || true
+    echo "[codex-worker] Output written to ${scratchpad_dir}/workers/codex.md" >&2
+  else
+    cat "${message_file}"
+  fi
 fi
 
 if [[ "${status}" -ne 0 ]]; then
