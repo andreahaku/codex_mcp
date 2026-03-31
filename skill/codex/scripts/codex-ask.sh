@@ -223,6 +223,7 @@ while [[ $# -gt 0 ]]; do
     --worker)
       worker_mode=1
       structured=1
+      set_mode "one-shot"
       shift
       ;;
     --scratchpad)
@@ -247,6 +248,12 @@ done
 if [[ "${list_sessions}" -eq 1 ]]; then
   print_saved_sessions
   exit 0
+fi
+
+# P2 fix: require --scratchpad when --worker is set
+if [[ "${worker_mode}" -eq 1 && -z "${scratchpad_dir}" ]]; then
+  echo "--worker requires --scratchpad <dir>" >&2
+  exit 2
 fi
 
 if [[ -z "${prompt}" ]]; then
@@ -451,33 +458,37 @@ if [[ -n "${reasoning}" ]]; then
 fi
 echo >&"${preamble_fd}"
 
-if [[ -s "${message_file}" ]]; then
-  if [[ "${worker_mode}" -eq 1 && -n "${scratchpad_dir}" ]]; then
-    # Worker mode: write output to scratchpad instead of stdout
-    mkdir -p "${scratchpad_dir}/workers"
-    local_status="completed"
-    if [[ "${status}" -ne 0 ]]; then
-      local_status="failed"
-    fi
-    {
-      echo "---"
-      echo "worker: codex"
-      echo "task: research"
-      echo "status: ${local_status}"
-      echo "started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-      echo "completed: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-      echo "model: ${model_override:-gpt-5.4}"
-      echo "session_id: ${final_session_id:-unknown}"
-      echo "---"
-      echo ""
-      cat "${message_file}"
-    } > "${scratchpad_dir}/workers/codex.md"
-    # Also write raw output for JSON parsing
-    cp "${message_file}" "${scratchpad_dir}/workers/codex.json" 2>/dev/null || true
-    echo "[codex-worker] Output written to ${scratchpad_dir}/workers/codex.md" >&2
-  else
-    cat "${message_file}"
+if [[ "${worker_mode}" -eq 1 ]]; then
+  # Worker mode: always write to scratchpad (even on failure)
+  mkdir -p "${scratchpad_dir}/workers"
+  local_status="completed"
+  if [[ "${status}" -ne 0 ]]; then
+    local_status="failed"
   fi
+  {
+    echo "---"
+    echo "worker: codex"
+    echo "task: research"
+    echo "status: ${local_status}"
+    echo "started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "completed: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "model: ${model_override:-gpt-5.4}"
+    echo "session_id: ${final_session_id:-unknown}"
+    echo "---"
+    echo ""
+    if [[ -s "${message_file}" ]]; then
+      cat "${message_file}"
+    elif [[ "${status}" -ne 0 ]]; then
+      echo "Worker failed with exit code ${status}."
+      grep '"type":"error"' "${events_file}" 2>/dev/null | tail -n1 || true
+    fi
+  } > "${scratchpad_dir}/workers/codex.md"
+  if [[ -s "${message_file}" ]]; then
+    cp "${message_file}" "${scratchpad_dir}/workers/codex.json" 2>/dev/null || true
+  fi
+  echo "[codex-worker] Output written to ${scratchpad_dir}/workers/codex.md" >&2
+elif [[ -s "${message_file}" ]]; then
+  cat "${message_file}"
 fi
 
 if [[ "${status}" -ne 0 ]]; then
