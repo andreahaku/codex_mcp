@@ -1,15 +1,9 @@
 ---
 name: codex
 description: >
-  Use the local Codex CLI when the user explicitly asks to consult Codex, delegate a task to Codex,
-  run /codex, continue or resume a Codex conversation, or request a Codex review of local changes,
-  a branch, a commit, or a PR. Also use this skill when Claude decides that Codex's strengths
-  (OpenAI reasoning models, alternative code generation perspective) would complement its own
-  analysis — for instance to get a second opinion on an implementation, cross-validate a complex
-  algorithm, or iterate on a design with a different model's perspective. Prefer persistent
-  multi-turn Codex sessions for iterative coding, architecture analysis, refinement, and
-  back-and-forth collaboration. This skill is independent from any MCP server and talks directly
-  to the installed `codex` CLI.
+  Local Codex CLI (OpenAI GPT-5.4) for second opinions, code review, iterative collaboration.
+  Use when user says /codex, asks to consult Codex, or when a different model perspective
+  would complement Claude's analysis. Supports persistent multi-turn sessions.
 user-invocable: true
 argument-hint: "<prompt or review request>"
 ---
