@@ -23,14 +23,15 @@ Options:
   --prompt <text>       Prompt text (alternative to positional arguments or stdin)
   --list-sessions       Show the saved aliases and last session for the current workspace
   --fast                Use lightweight model (gpt-5.1-codex-mini) with low reasoning for quick tasks
-  --deep                Use full model (gpt-5.4) with max reasoning for complex analysis
+  --deep                Use full model (gpt-5.5) with max reasoning for complex analysis
   --reasoning <level>   Set reasoning effort: minimal, low, medium, high, xhigh
+  --tier <default|fast> Set service_tier (codex 0.121.0+). 'fast' = accelerated inference (2X plan usage)
   --structured          Request JSON-structured output for cross-model chaining
   --worker              Worker mode: write output to scratchpad, structured by default
   --scratchpad <dir>    Scratchpad directory for worker mode output
 
 Environment:
-  CODEX_SKILL_MODEL       Optional model override (default: gpt-5.4)
+  CODEX_SKILL_MODEL       Optional model override (default: gpt-5.5 with xhigh reasoning)
   CODEX_SKILL_SANDBOX     Optional sandbox mode override
   CODEX_SKILL_APPROVAL    Optional approval policy override
   CODEX_SKILL_SEARCH=1    Enable web search for Codex
@@ -43,6 +44,11 @@ if ! command -v codex >/dev/null 2>&1; then
   echo "Codex CLI not found. Install it first and make sure \`codex\` is on PATH." >&2
   exit 1
 fi
+
+# Source the shared timeout helper (closes stdin from /dev/null, kills hung processes).
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-with-timeout.sh"
+CODEX_DEFAULT_TIMEOUT=600
 
 workspace_root() {
   local root
@@ -82,6 +88,7 @@ model_override=""
 structured=0
 worker_mode=0
 scratchpad_dir=""
+service_tier=""
 
 set_mode() {
   local next_mode="$1"
@@ -204,7 +211,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --deep)
-      model_override="gpt-5.4"
+      model_override="gpt-5.5"
       reasoning="xhigh"
       shift
       ;;
@@ -232,6 +239,20 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       scratchpad_dir="$2"
+      shift 2
+      ;;
+    --tier)
+      if [[ $# -lt 2 ]]; then
+        echo "--tier requires a value (default, fast)" >&2
+        exit 2
+      fi
+      case "$2" in
+        default|fast) service_tier="$2" ;;
+        *)
+          echo "--tier value must be 'default' or 'fast', got: $2" >&2
+          exit 2
+          ;;
+      esac
       shift 2
       ;;
     -h|--help)
@@ -313,11 +334,16 @@ cmd=(
   -c 'approval_policy="on-request"'
 )
 
-# Model: CLI flag > env var > default (codex default is gpt-5.4)
+# Model: CLI flag > env var > skill default (gpt-5.5 with xhigh reasoning)
 if [[ -n "${model_override}" ]]; then
   cmd+=(-c "model=\"${model_override}\"")
 elif [[ -n "${CODEX_SKILL_MODEL:-}" ]]; then
   cmd+=(-c "model=\"${CODEX_SKILL_MODEL}\"")
+else
+  cmd+=(-c "model=\"gpt-5.5\"")
+  if [[ -z "${reasoning}" ]]; then
+    reasoning="xhigh"
+  fi
 fi
 
 if [[ -n "${CODEX_SKILL_SANDBOX:-}" ]]; then
@@ -330,6 +356,10 @@ fi
 
 if [[ -n "${reasoning}" ]]; then
   cmd+=(-c "model_reasoning_effort=\"${reasoning}\"")
+fi
+
+if [[ -n "${service_tier}" ]]; then
+  cmd+=(-c "service_tier=\"${service_tier}\"")
 fi
 
 if [[ "${CODEX_SKILL_SEARCH:-0}" == "1" ]]; then
@@ -407,10 +437,14 @@ case "${mode}" in
 esac
 
 status=0
-if "${cmd[@]}" > "${events_file}" 2> "${stderr_file}"; then
+codex_timeout="${CODEX_SKILL_TIMEOUT:-$CODEX_DEFAULT_TIMEOUT}"
+if run_with_timeout "${codex_timeout}" "${cmd[@]}" > "${events_file}" 2> "${stderr_file}"; then
   status=0
 else
   status=$?
+fi
+if [[ "${status}" -eq 124 ]]; then
+  echo "[codex-session] timed out after ${codex_timeout}s" >&2
 fi
 
 started_session_id="$(grep -m1 '"type":"thread.started"' "${events_file}" | sed -E 's/.*"thread_id":"([^"]+)".*/\1/' || true)"
@@ -456,6 +490,9 @@ fi
 if [[ -n "${reasoning}" ]]; then
   echo "[codex-session] reasoning=${reasoning}" >&"${preamble_fd}"
 fi
+if [[ -n "${service_tier}" ]]; then
+  echo "[codex-session] service_tier=${service_tier}" >&"${preamble_fd}"
+fi
 echo >&"${preamble_fd}"
 
 if [[ "${worker_mode}" -eq 1 ]]; then
@@ -472,14 +509,18 @@ if [[ "${worker_mode}" -eq 1 ]]; then
     echo "status: ${local_status}"
     echo "started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "completed: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    echo "model: ${model_override:-gpt-5.4}"
+    echo "model: ${model_override:-${CODEX_SKILL_MODEL:-gpt-5.5}}"
     echo "session_id: ${final_session_id:-unknown}"
     echo "---"
     echo ""
     if [[ -s "${message_file}" ]]; then
       cat "${message_file}"
     elif [[ "${status}" -ne 0 ]]; then
-      echo "Worker failed with exit code ${status}."
+      if [[ "${status}" -eq 124 ]]; then
+        echo "Worker timed out after ${codex_timeout}s."
+      else
+        echo "Worker failed with exit code ${status}."
+      fi
       grep '"type":"error"' "${events_file}" 2>/dev/null | tail -n1 || true
     fi
   } > "${scratchpad_dir}/workers/codex.md"
