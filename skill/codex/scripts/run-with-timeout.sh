@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # run-with-timeout.sh — portable timeout wrapper.
-# Source this file, then call: run_with_timeout <secs> <cmd...>
+# Source this file, then call:
+#   run_with_timeout <secs> <cmd...>
+#   run_with_timeout <secs> --stdin <file> <cmd...>
 #
 # Behavior:
 #   1. If gtimeout (GNU coreutils) is available, use it.
@@ -10,12 +12,17 @@
 #      via `$(run_with_timeout ...)`: the command substitution waits for the
 #      stdout pipe to close, which means orphaned grandchildren must also die.
 #
+# Stdin handling:
+#   - Default: stdin is /dev/null. Critical for non-interactive CLIs that
+#     would otherwise block waiting on inherited stdin.
+#   - With --stdin <file>: the given file is fed to the command's stdin.
+#     Use this to pass large prompts/diffs that exceed ARG_MAX.
+#
 # Returns:
 #   - The command's own exit status on normal completion.
 #   - 124 if the command was killed by the timeout (matches GNU timeout convention).
 #
 # Notes:
-#   - Always closes stdin from /dev/null. Critical for non-interactive CLIs.
 #   - Does NOT alter stdout/stderr — redirect them at the call site if needed.
 
 # Recursively kill a process and all its descendants.
@@ -35,22 +42,33 @@ _rwt_kill_tree() {
 run_with_timeout() {
   local secs="$1"
   shift
+
+  local stdin_src="/dev/null"
+  if [[ "${1:-}" == "--stdin" ]]; then
+    stdin_src="$2"
+    if [[ ! -r "${stdin_src}" ]]; then
+      echo "run_with_timeout: --stdin file not readable: ${stdin_src}" >&2
+      return 2
+    fi
+    shift 2
+  fi
+
   if [[ -z "${secs}" || "${secs}" -le 0 ]]; then
-    "$@" </dev/null
+    "$@" <"${stdin_src}"
     return $?
   fi
 
   if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout --preserve-status --kill-after=2 "${secs}" "$@" </dev/null
+    gtimeout --preserve-status --kill-after=2 "${secs}" "$@" <"${stdin_src}"
     return $?
   fi
   if command -v timeout >/dev/null 2>&1; then
-    timeout --preserve-status --kill-after=2 "${secs}" "$@" </dev/null
+    timeout --preserve-status --kill-after=2 "${secs}" "$@" <"${stdin_src}"
     return $?
   fi
 
   # Pure bash watchdog fallback with recursive process-tree kill.
-  "$@" </dev/null &
+  "$@" <"${stdin_src}" &
   local cmd_pid=$!
   (
     sleep "${secs}"
