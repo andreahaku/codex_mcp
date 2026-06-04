@@ -22,7 +22,7 @@ Options:
   --name <alias>        Save or update a friendly alias for the resolved session
   --prompt <text>       Prompt text (alternative to positional arguments or stdin)
   --list-sessions       Show the saved aliases and last session for the current workspace
-  --fast                Use lightweight model (gpt-5.1-codex-mini) with low reasoning for quick tasks
+  --fast                Use lightweight model (gpt-5.4-mini) with low reasoning for quick tasks
   --deep                Use full model (gpt-5.5) with max reasoning for complex analysis
   --reasoning <level>   Set reasoning effort: minimal, low, medium, high, xhigh
   --tier <default|fast> Set service_tier (codex 0.121.0+). 'fast' = accelerated inference (2X plan usage)
@@ -206,7 +206,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --fast)
-      model_override="gpt-5.1-codex-mini"
+      model_override="gpt-5.4-mini"
       reasoning="low"
       shift
       ;;
