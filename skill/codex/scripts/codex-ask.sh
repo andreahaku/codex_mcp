@@ -290,6 +290,17 @@ if [[ -z "${prompt//[[:space:]]/}" ]]; then
   exit 2
 fi
 
+# --- Level-A context compression (lossless; protects code blocks; no-op on small input) ---
+# Trims log/output noise to save subscription tokens on large prompts. Best-effort: the
+# prompt is only replaced if compression produced non-empty output, so it can never drop it.
+_cc_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compress-context.ts"
+if command -v bun >/dev/null 2>&1 && [[ -f "${_cc_script}" ]]; then
+  # `printf X` sentinel preserves trailing newlines that $() would otherwise strip.
+  _cc_out="$(printf '%s' "${prompt}" | bun "${_cc_script}" --skill codex; printf X)"
+  _cc_out="${_cc_out%X}"
+  [[ -n "${_cc_out//[[:space:]]/}" ]] && prompt="${_cc_out}"
+fi
+
 if [[ "${mode}" == "one-shot" && -n "${alias_name}" ]]; then
   echo "--name is not supported with --one-shot because one-shot mode is ephemeral." >&2
   exit 2
