@@ -39,6 +39,7 @@ const estTokens = (s: string): number => Math.ceil(s.length / 4);
 const COMPRESSIBLE_TAGS = new Set([
   "", "log", "logs", "text", "txt", "console", "output", "out", "term", "terminal",
   "plaintext", "plain", "shell-session", "shellsession", "sh-session", "stacktrace", "trace",
+  "stdout", "stderr",
 ]);
 
 // ANSI/terminal escape stripper. Every alternative is anchored to ESC (\x1b) so it NEVER

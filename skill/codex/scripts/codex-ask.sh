@@ -294,7 +294,8 @@ fi
 # Trims log/output noise to save subscription tokens on large prompts. Best-effort: the
 # prompt is only replaced if compression produced non-empty output, so it can never drop it.
 _cc_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compress-context.ts"
-if command -v bun >/dev/null 2>&1 && [[ -f "${_cc_script}" ]]; then
+# Skip spawning bun entirely for small prompts (matches the script's own MIN_CHARS=2000).
+if [[ ${#prompt} -ge 2000 ]] && command -v bun >/dev/null 2>&1 && [[ -f "${_cc_script}" ]]; then
   # `printf X` sentinel preserves trailing newlines that $() would otherwise strip.
   _cc_out="$(printf '%s' "${prompt}" | bun "${_cc_script}" --skill codex; printf X)"
   _cc_out="${_cc_out%X}"
