@@ -58,13 +58,26 @@ run_with_timeout() {
     return $?
   fi
 
+  # With --preserve-status, GNU timeout returns the signal-based status (143 for
+  # SIGTERM, 137 for SIGKILL) instead of its own 124 on a timeout kill. Callers
+  # rely on the documented "124 == timed out" contract (see header), so normalize
+  # those signal codes back to 124 here, matching the bash-watchdog fallback below.
+  local rc
   if command -v gtimeout >/dev/null 2>&1; then
     gtimeout --preserve-status --kill-after=2 "${secs}" "$@" <"${stdin_src}"
-    return $?
+    rc=$?
+    if [[ "${rc}" -eq 143 || "${rc}" -eq 137 ]]; then
+      return 124
+    fi
+    return "${rc}"
   fi
   if command -v timeout >/dev/null 2>&1; then
     timeout --preserve-status --kill-after=2 "${secs}" "$@" <"${stdin_src}"
-    return $?
+    rc=$?
+    if [[ "${rc}" -eq 143 || "${rc}" -eq 137 ]]; then
+      return 124
+    fi
+    return "${rc}"
   fi
 
   # Pure bash watchdog fallback with recursive process-tree kill.

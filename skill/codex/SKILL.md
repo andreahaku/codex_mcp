@@ -77,10 +77,12 @@ bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --commit <sha>
 
 Choose the depth level based on task complexity:
 
-- `--fast`: Uses `gpt-5.4-mini` with low reasoning. Best for quick lookups, simple code questions, syntax checks. Fast and lightweight.
-- *(default)*: Uses `gpt-5.4` with standard reasoning. Good for most tasks.
-- `--deep`: Uses `gpt-5.4` with `xhigh` reasoning effort. Best for complex architecture analysis, subtle bug hunting, security audits.
+- `--fast`: Lightweight model with low reasoning. Best for quick lookups, simple code questions, syntax checks. Fast and lightweight.
+- *(default)*: Full model with `xhigh` reasoning. Good for most tasks.
+- `--deep`: Full model with `xhigh` reasoning effort. Best for complex architecture analysis, subtle bug hunting, security audits.
 - `--reasoning <level>`: Fine-grained control — `minimal`, `low`, `medium`, `high`, `xhigh`.
+
+> Model names are centralized in `scripts/model-config.sh` (single source of truth — `CODEX_MODEL_FAST`, `CODEX_MODEL_DEFAULT`, `CODEX_MODEL_DEEP`). If `--fast`/`--deep` start failing silently, a model id there was likely retired by OpenAI; update that one file. They are not auto-derivable (the Codex CLI exposes no model-list command), so they need occasional manual confirmation.
 
 ```bash
 # Quick question
@@ -99,6 +101,10 @@ Use `--structured` to get JSON output for machine-readable results. This is esse
 
 ```bash
 bash "${CLAUDE_SKILL_DIR}/scripts/codex-ask.sh" --one-shot --structured "Review this function for bugs: $(cat src/utils.ts)"
+
+# codex-review.sh also supports --structured (used by the /pr skill for cross-model merge).
+# Output is always valid JSON; non-JSON / timeout / failure output is wrapped into a fallback envelope.
+bash "${CLAUDE_SKILL_DIR}/scripts/codex-review.sh" --base main --structured --deep
 ```
 
 Output schema: `{ findings[], summary, model }` — each finding has `id`, `severity`, `category`, `file`, `line`, `title`, `detail`, `recommendation`, `confidence`.

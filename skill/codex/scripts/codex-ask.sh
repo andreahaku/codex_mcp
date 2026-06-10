@@ -48,6 +48,9 @@ fi
 # Source the shared timeout helper (closes stdin from /dev/null, kills hung processes).
 # shellcheck source=/dev/null
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-with-timeout.sh"
+# Source the centralized model-name config (single source of truth for model ids).
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/model-config.sh"
 CODEX_DEFAULT_TIMEOUT=600
 
 workspace_root() {
@@ -206,13 +209,13 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --fast)
-      model_override="gpt-5.4-mini"
-      reasoning="low"
+      model_override="${CODEX_MODEL_FAST}"
+      reasoning="${CODEX_REASONING_FAST}"
       shift
       ;;
     --deep)
-      model_override="gpt-5.5"
-      reasoning="xhigh"
+      model_override="${CODEX_MODEL_DEEP}"
+      reasoning="${CODEX_REASONING_DEEP}"
       shift
       ;;
     --reasoning)
@@ -352,9 +355,9 @@ if [[ -n "${model_override}" ]]; then
 elif [[ -n "${CODEX_SKILL_MODEL:-}" ]]; then
   cmd+=(-c "model=\"${CODEX_SKILL_MODEL}\"")
 else
-  cmd+=(-c "model=\"gpt-5.5\"")
+  cmd+=(-c "model=\"${CODEX_MODEL_DEFAULT}\"")
   if [[ -z "${reasoning}" ]]; then
-    reasoning="xhigh"
+    reasoning="${CODEX_REASONING_DEFAULT}"
   fi
 fi
 
@@ -521,7 +524,7 @@ if [[ "${worker_mode}" -eq 1 ]]; then
     echo "status: ${local_status}"
     echo "started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "completed: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    echo "model: ${model_override:-${CODEX_SKILL_MODEL:-gpt-5.5}}"
+    echo "model: ${model_override:-${CODEX_SKILL_MODEL:-${CODEX_MODEL_DEFAULT}}}"
     echo "session_id: ${final_session_id:-unknown}"
     echo "---"
     echo ""
