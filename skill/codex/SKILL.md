@@ -1,7 +1,7 @@
 ---
 name: codex
 description: >
-  Local Codex CLI (OpenAI GPT-5.4) for second opinions, code review, iterative collaboration.
+  Local Codex CLI (OpenAI GPT-5.5) for second opinions, code review, iterative collaboration.
   Use when user says /codex, asks to consult Codex, or when a different model perspective
   would complement Claude's analysis. Supports persistent multi-turn sessions.
 user-invocable: true
@@ -10,7 +10,7 @@ argument-hint: "<prompt or review request>"
 
 # Codex
 
-Use the local `codex` CLI directly (GPT-5.4 default). Do not use this repository's MCP server when this skill is active.
+Use the local `codex` CLI directly (GPT-5.5 default). Do not use this repository's MCP server when this skill is active.
 
 ## Context
 
