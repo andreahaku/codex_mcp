@@ -17,15 +17,16 @@
 # must be confirmed by hand against what OpenAI currently serves. If `--fast`
 # or `--deep` start failing, the most likely cause is a retired model name
 # below. The DEEP/default model below matches the user's ~/.codex/config.toml
-# (model = "gpt-5.5"); the FAST model is a best-effort current lightweight
-# model and is the one most likely to need confirmation.
+# (model = "gpt-5.6-sol"); the FAST model is the low-cost agentic tier of the
+# same 5.6 family and is the one most likely to need confirmation.
 
 # Default / "deep" full model. Mirrors ~/.codex/config.toml default.
-: "${CODEX_MODEL_DEFAULT:=gpt-5.5}"
-: "${CODEX_MODEL_DEEP:=gpt-5.5}"
+# GPT-5.6 family GA 2026-07-09 (Sol = frontier, Terra = balanced, Luna = fast).
+: "${CODEX_MODEL_DEFAULT:=gpt-5.6-sol}"
+: "${CODEX_MODEL_DEEP:=gpt-5.6-sol}"
 
-# Lightweight model for --fast. NEEDS-CONFIRMATION if quick tasks start failing.
-: "${CODEX_MODEL_FAST:=gpt-5.4-mini}"
+# Lightweight model for --fast (Luna: "fast and affordable agentic coding model").
+: "${CODEX_MODEL_FAST:=gpt-5.6-luna}"
 
 # Reasoning effort presets per tier.
 : "${CODEX_REASONING_FAST:=low}"
