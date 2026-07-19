@@ -349,6 +349,18 @@ cmd=(
   -c 'approval_policy="on-request"'
 )
 
+# Web search OFF di default (19/7/2026): su prompt grandi Sol partiva in
+# ricerche web autonome bruciando l'intero budget di tempo e terminando
+# SENZA messaggio finale (review "riuscite" ma vuote). Chiave verificata:
+# web_search="disabled" (tools.web_search=false NON funziona su 0.144.x).
+# CODEX_SKILL_SEARCH=1 resta l'opt-in esplicito per riabilitarla.
+if [[ "${CODEX_SKILL_SEARCH:-0}" != "1" ]]; then
+  cmd+=(
+    -c 'web_search="disabled"'
+    -c 'sandbox_workspace_write.network_access=false'
+  )
+fi
+
 # Model: CLI flag > env var > skill default (gpt-5.5 with xhigh reasoning)
 if [[ -n "${model_override}" ]]; then
   cmd+=(-c "model=\"${model_override}\"")
@@ -545,6 +557,14 @@ if [[ "${worker_mode}" -eq 1 ]]; then
   echo "[codex-worker] Output written to ${scratchpad_dir}/workers/codex.md" >&2
 elif [[ -s "${message_file}" ]]; then
   cat "${message_file}"
+elif [[ "${status}" -eq 0 ]]; then
+  # Fail LOUD: exit 0 con message file vuoto e' il bug silenzioso del 19/7
+  # (run "riuscito" senza risposta). Meglio un errore esplicito di un vuoto
+  # spacciato per successo.
+  echo "[codex-session] ERRORE: nessun messaggio finale prodotto (message file vuoto)." >&2
+  last_error="$(grep '"type":"error"' "${events_file}" 2>/dev/null | tail -n1 || true)"
+  [[ -n "${last_error}" ]] && echo "[codex-session] ultimo evento error: ${last_error}" >&2
+  exit 3
 fi
 
 if [[ "${status}" -ne 0 ]]; then

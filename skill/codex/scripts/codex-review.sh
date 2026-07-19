@@ -209,6 +209,12 @@ if [[ -n "${reasoning}" ]]; then
   args=(-c "model_reasoning_effort=\"${reasoning}\"" "${args[@]}")
 fi
 
+# Web search OFF di default (19/7/2026): vedi codex-ask.sh — su input grandi
+# Sol partiva in ricerche autonome e finiva il tempo senza risposta finale.
+if [[ "${CODEX_SKILL_SEARCH:-0}" != "1" ]]; then
+  args=(-c 'web_search="disabled"' -c 'sandbox_workspace_write.network_access=false' "${args[@]}")
+fi
+
 # --structured: ask the model to emit the cross-model JSON findings schema.
 # We prepend the schema instruction to whatever custom_prompt exists so it flows
 # through the same developer_instructions / positional-prompt plumbing below.
