@@ -58,13 +58,19 @@ run_with_timeout() {
     return $?
   fi
 
-  # With --preserve-status, GNU timeout returns the signal-based status (143 for
-  # SIGTERM, 137 for SIGKILL) instead of its own 124 on a timeout kill. Callers
-  # rely on the documented "124 == timed out" contract (see header), so normalize
-  # those signal codes back to 124 here, matching the bash-watchdog fallback below.
+  # NIENTE --preserve-status: era la causa del bug diagnosticato il 22/7/2026.
+  # Con quel flag GNU timeout restituisce lo stato del processo ucciso, e un CLI
+  # che gestisce SIGTERM uscendo in modo pulito torna **0** — non 143, non 137.
+  # codex fa esattamente questo (riprodotto: run uccisa a 12s -> status 0, message
+  # file mai creato). Le normalizzazioni 143/137 -> 124 qui sotto non scattavano
+  # mai, il chiamante leggeva "successo con output vuoto" e finiva per attribuire
+  # il fallimento al primo evento error del log (il warning benigno delle skill).
+  # Senza il flag, timeout restituisce **sempre 124** quando e' lui a uccidere:
+  # e' il contratto dichiarato nell'header. Gli exit status normali passano intatti.
+  # Le due righe 143/137 restano come rete per i segnali che arrivano da fuori.
   local rc
   if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout --preserve-status --kill-after=2 "${secs}" "$@" <"${stdin_src}"
+    gtimeout --kill-after=2 "${secs}" "$@" <"${stdin_src}"
     rc=$?
     if [[ "${rc}" -eq 143 || "${rc}" -eq 137 ]]; then
       return 124
@@ -72,7 +78,7 @@ run_with_timeout() {
     return "${rc}"
   fi
   if command -v timeout >/dev/null 2>&1; then
-    timeout --preserve-status --kill-after=2 "${secs}" "$@" <"${stdin_src}"
+    timeout --kill-after=2 "${secs}" "$@" <"${stdin_src}"
     rc=$?
     if [[ "${rc}" -eq 143 || "${rc}" -eq 137 ]]; then
       return 124
@@ -81,11 +87,20 @@ run_with_timeout() {
   fi
 
   # Pure bash watchdog fallback with recursive process-tree kill.
+  # Il watchdog lascia una sentinella su disco PRIMA di uccidere: e' l'unico modo
+  # affidabile di sapere che il timeout e' scattato, perche' un comando che
+  # gestisce SIGTERM puo' uscire con qualsiasi status — codex esce con 0 — e in
+  # quel caso l'exit status non dice nulla (stesso bug del ramo GNU timeout).
+  local fired_flag
+  fired_flag="$(mktemp -t rwt-fired.XXXXXX)"
+  rm -f "${fired_flag}"
+
   "$@" <"${stdin_src}" &
   local cmd_pid=$!
   (
     sleep "${secs}"
     if kill -0 "${cmd_pid}" 2>/dev/null; then
+      : > "${fired_flag}"
       _rwt_kill_tree TERM "${cmd_pid}"
       sleep 2
       _rwt_kill_tree KILL "${cmd_pid}" 2>/dev/null
@@ -103,6 +118,11 @@ run_with_timeout() {
     _rwt_kill_tree KILL "${watcher_pid}" 2>/dev/null
     wait "${watcher_pid}" 2>/dev/null || true
   fi
+  if [[ -e "${fired_flag}" ]]; then
+    rm -f "${fired_flag}"
+    return 124
+  fi
+  rm -f "${fired_flag}"
   if [[ "${rc}" -eq 143 || "${rc}" -eq 137 ]]; then
     return 124
   fi

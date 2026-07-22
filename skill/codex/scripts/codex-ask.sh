@@ -51,7 +51,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-with-timeout.sh"
 # Source the centralized model-name config (single source of truth for model ids).
 # shellcheck source=/dev/null
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/model-config.sh"
+# Timeout di default (secondi). 600 va bene per una domanda, NON per una review:
+# il 22/7/2026 una full-repo review a xhigh è stata uccisa qui dentro a 10 minuti
+# e il fallimento è arrivato travestito da "errore del budget skill" (vedi il
+# commento in run-with-timeout.sh). La stessa review, lanciata a mano con 1500s,
+# è andata a buon fine. Il tempo scala quindi con l'effort, che è ciò che
+# determina davvero la durata. Override esplicito: CODEX_SKILL_TIMEOUT.
 CODEX_DEFAULT_TIMEOUT=600
+CODEX_DEEP_TIMEOUT=1800
 
 workspace_root() {
   local root
@@ -464,14 +471,19 @@ case "${mode}" in
 esac
 
 status=0
-codex_timeout="${CODEX_SKILL_TIMEOUT:-$CODEX_DEFAULT_TIMEOUT}"
+default_timeout="${CODEX_DEFAULT_TIMEOUT}"
+case "${reasoning}" in
+  high|xhigh|max) default_timeout="${CODEX_DEEP_TIMEOUT}" ;;
+esac
+codex_timeout="${CODEX_SKILL_TIMEOUT:-$default_timeout}"
 if run_with_timeout "${codex_timeout}" "${cmd[@]}" > "${events_file}" 2> "${stderr_file}"; then
   status=0
 else
   status=$?
 fi
 if [[ "${status}" -eq 124 ]]; then
-  echo "[codex-session] timed out after ${codex_timeout}s" >&2
+  echo "[codex-session] TIMEOUT dopo ${codex_timeout}s (reasoning=${reasoning:-default})." >&2
+  echo "[codex-session] la risposta parziale e' persa: rilancia con CODEX_SKILL_TIMEOUT=$((codex_timeout * 2))" >&2
 fi
 
 started_session_id="$(grep -m1 '"type":"thread.started"' "${events_file}" | sed -E 's/.*"thread_id":"([^"]+)".*/\1/' || true)"
@@ -562,8 +574,21 @@ elif [[ "${status}" -eq 0 ]]; then
   # (run "riuscito" senza risposta). Meglio un errore esplicito di un vuoto
   # spacciato per successo.
   echo "[codex-session] ERRORE: nessun messaggio finale prodotto (message file vuoto)." >&2
-  last_error="$(grep '"type":"error"' "${events_file}" 2>/dev/null | tail -n1 || true)"
-  [[ -n "${last_error}" ]] && echo "[codex-session] ultimo evento error: ${last_error}" >&2
+  # Escludere i warning benigni PRIMA di indicare una causa. Il CLI emette con
+  # "type":"error" anche avvisi innocui — su tutti quello del budget skill, che
+  # dice esplicitamente "Codex can still see every skill" ed e' presente in OGNI
+  # run, comprese quelle riuscite. Additarlo come causa ha mandato fuori strada
+  # la diagnosi per giorni (22/7/2026): il colpevole vero era il timeout.
+  last_error="$(grep '"type":"error"' "${events_file}" 2>/dev/null \
+    | grep -v 'skills context budget' \
+    | tail -n1 || true)"
+  if [[ -n "${last_error}" ]]; then
+    echo "[codex-session] ultimo evento error: ${last_error}" >&2
+  else
+    echo "[codex-session] nessun errore vero nel log: la run e' stata interrotta senza produrre risposta." >&2
+    echo "[codex-session] sospetto n.1 = timeout (${codex_timeout}s con reasoning=${reasoning:-default})." >&2
+    echo "[codex-session] rilancia con CODEX_SKILL_TIMEOUT piu' alto, es. CODEX_SKILL_TIMEOUT=2400" >&2
+  fi
   exit 3
 fi
 
