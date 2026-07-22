@@ -28,7 +28,7 @@ Environment:
   CODEX_SKILL_SANDBOX    Optional sandbox mode override
   CODEX_SKILL_APPROVAL   Optional approval policy override
   CODEX_SKILL_REASONING  Default reasoning effort
-  CODEX_SKILL_TIMEOUT    Timeout in seconds for the codex invocation (default: 600)
+  CODEX_SKILL_TIMEOUT    Timeout in seconds for the codex invocation (default: 1800)
 EOF
 }
 
@@ -43,7 +43,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-with-timeout.sh"
 # Source the centralized model-name config (single source of truth for model ids).
 # shellcheck source=/dev/null
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/model-config.sh"
-CODEX_DEFAULT_TIMEOUT=600
+# La review gira a xhigh anche senza flag (model_reasoning_effort globale in
+# ~/.codex/config.toml), quindi il default deve reggere l'effort pieno: 607s
+# misurati su un commit medio (22/7). Solo gli effort espliciti leggeri
+# scendono a 600. Override: CODEX_SKILL_TIMEOUT.
+CODEX_DEFAULT_TIMEOUT=1800
+CODEX_FAST_TIMEOUT=600
 
 # emit_structured_json <raw-output-file> <model> <worker_status>
 # Emits a guaranteed-valid { findings[], summary, model } JSON object to stdout.
@@ -244,7 +249,11 @@ if [[ -n "${custom_prompt}" ]]; then
   fi
 fi
 
-codex_timeout="${CODEX_SKILL_TIMEOUT:-$CODEX_DEFAULT_TIMEOUT}"
+default_timeout="${CODEX_DEFAULT_TIMEOUT}"
+case "${reasoning}" in
+  minimal|low|medium) default_timeout="${CODEX_FAST_TIMEOUT}" ;;
+esac
+codex_timeout="${CODEX_SKILL_TIMEOUT:-$default_timeout}"
 
 if [[ "${worker_mode}" -eq 1 ]]; then
   # Worker mode: capture output and always write to scratchpad (even on failure or timeout).
