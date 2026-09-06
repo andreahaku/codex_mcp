@@ -44,8 +44,8 @@
 # A parita' di lavoro prodotto, Astra `high` costa ~2x Sol `xhigh` e Astra
 # `xhigh` ~3x, nonostante Astra usi MENO token (a `high` il 38% dell'output di
 # Sol). Il prezzo unitario si mangia l'efficienza.
-# ⚠️ Con CODEX_REASONING_DEFAULT=xhigh qui sotto, un `/codex` senza flag e senza
-# env prende Astra `xhigh`, cioe' il braccio piu' caro dei quattro misurati.
+# Dal 6/9/2026 il default e' `high` (deciso da Andrea): un `/codex` senza flag e senza env
+# prende Astra `high`, ~2x Sol. `xhigh` resta su --deep, che esiste per quello.
 : "${CODEX_MODEL_DEFAULT:=gpt-6-astra}"
 : "${CODEX_MODEL_DEEP:=gpt-6-astra}"
 
@@ -58,4 +58,4 @@
 # Reasoning effort presets per tier.
 : "${CODEX_REASONING_FAST:=low}"
 : "${CODEX_REASONING_DEEP:=xhigh}"
-: "${CODEX_REASONING_DEFAULT:=xhigh}"
+: "${CODEX_REASONING_DEFAULT:=high}"
