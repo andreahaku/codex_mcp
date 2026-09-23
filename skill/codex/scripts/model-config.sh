@@ -46,14 +46,19 @@
 # Sol). Il prezzo unitario si mangia l'efficienza.
 # Dal 6/9/2026 il default e' `high` (deciso da Andrea): un `/codex` senza flag e senza env
 # prende Astra `high`, ~2x Sol. `xhigh` resta su --deep, che esiste per quello.
-: "${CODEX_MODEL_DEFAULT:=gpt-6-astra}"
-: "${CODEX_MODEL_DEEP:=gpt-6-astra}"
+#
+# 🔄 23/9/2026: default e deep passano a GPT-6 Sol (uscito il 22/9), deciso da Andrea dopo il bench
+# del 23/9 (ollama-bench/reports/nuovi-modelli-2026-09-23.md): qualita' pari a GPT-5.6 Sol e ad Astra
+# su tutte le suite, meta' dei token di output di 5.6 Sol sugli stessi task. Gli abbonamenti rendono
+# il prezzo a listino secondario: conta il consumo di token, cioe' la quota.
+: "${CODEX_MODEL_DEFAULT:=gpt-6-sol}"
+: "${CODEX_MODEL_DEEP:=gpt-6-sol}"
 
-# Lightweight model for --fast (Luna: "fast and affordable agentic coding model").
-# ⚠️ NON allineato ad Astra apposta: Astra non pubblica un tier economico, e --fast
-# esiste per costare poco. La skill quindi mescola due famiglie, 6 per default/deep
-# e 5.6 per fast. E' voluto, non una svista.
-: "${CODEX_MODEL_FAST:=gpt-5.6-luna}"
+# Lightweight model for --fast. Dal 23/9/2026 GPT-6 Luna: sul codice ben specificato pareggia Sol
+# (dev-bench 99,5, break-bench 23/24). ⛔ MAI per code review, triage o giudizi: nel bench del 23/9
+# cade nella trappola della ground truth e trova 1 bug vero su 4 (T1 35/25 contro 85/82 di Sol).
+# Quindi --fast NON va usato con codex-review.sh.
+: "${CODEX_MODEL_FAST:=gpt-6-luna}"
 
 # Reasoning effort presets per tier.
 : "${CODEX_REASONING_FAST:=low}"
