@@ -1,5 +1,7 @@
 # Codex MCP Server
 
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/andreahaku) [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/andreahaku)
+
 A Model Context Protocol (MCP) server that integrates OpenAI's Codex CLI with Claude Code, enabling you to use Codex's capabilities directly from within Claude.
 
 This server is converted from the original GPT-5 MCP server, with cost tracking features removed and replaced with direct Codex CLI integration.
@@ -376,6 +378,10 @@ pnpm run build
 pnpm run test         # Run test suite
 pnpm run dev          # Development mode
 ```
+
+## Support
+
+Codex MCP Server is free and open source. If it is useful to you, you can support its development with a one-off donation on [Ko-fi](https://ko-fi.com/andreahaku) or by sponsoring me on [GitHub Sponsors](https://github.com/sponsors/andreahaku). Donations are voluntary and do not unlock any feature.
 
 ## License
 
